@@ -1,0 +1,9 @@
+{
+  "name": "slopbox-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Playwright end-to-end tests for the slopbox web UI.",
+  "dependencies": {
+    "playwright": "^1.61.0"
+  }
+}

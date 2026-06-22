@@ -1,0 +1,16 @@
+# Sample slopbox config for a Node/TypeScript web app.
+postgres = true   # pgweb at /db for the app's database
+code     = true   # code-server at /edit
+
+[[commands]]
+name = "dev"
+icon = "play"
+args = ["npm", "run", "dev"]
+
+[[commands]]
+name = "test"
+args = ["npm", "test"]
+
+[[commands]]
+name = "psql"
+args = ["psql", "postgres://postgres:postgres@127.0.0.1:5432/postgres"]

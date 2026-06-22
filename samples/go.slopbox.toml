@@ -1,0 +1,15 @@
+# Sample slopbox config for a Go service.
+postgres = true
+
+[[commands]]
+name = "run"
+icon = "play"
+args = ["go", "run", "./cmd/server"]
+
+[[commands]]
+name = "test"
+args = ["go", "test", "./..."]
+
+[[commands]]
+name = "tidy"
+args = ["go", "mod", "tidy"]

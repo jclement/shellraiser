@@ -8,8 +8,12 @@ description = "Build the slopbox binary into dist/"
 run = "CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/slopbox ./cmd/slopbox"
 
 [tasks.test]
-description = "Run the Go tests"
+description = "Run the Go unit tests"
 run = "go test ./..."
+
+[tasks.e2e]
+description = "Run the Playwright end-to-end browser tests"
+run = "bash test/e2e/run.sh"
 
 [tasks.dev]
 description = "Build the image and run a box in the foreground (--rm, live logs)"

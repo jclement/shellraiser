@@ -11,3 +11,7 @@
 
 # goreleaser / build output
 /dist/
+
+# e2e test deps
+test/e2e/node_modules/
+test/e2e/test-results/
