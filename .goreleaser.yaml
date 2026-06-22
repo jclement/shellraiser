@@ -1,0 +1,32 @@
+# goreleaser config for the slopbox binary (the image is the primary artifact;
+# this is for `mise run package` snapshot builds + sanity checks).
+version: 2
+
+project_name: slopbox
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: slopbox
+    main: ./cmd/slopbox
+    binary: slopbox
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+
+archives:
+  - id: slopbox
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"

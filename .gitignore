@@ -1,0 +1,13 @@
+# build artifacts (the root binary only — NOT the cmd/slopbox source dir)
+/slopbox
+*.test
+*.out
+
+# local dogfood state (run.sh)
+.slopbox/
+
+# editor noise
+.DS_Store
+
+# goreleaser / build output
+/dist/

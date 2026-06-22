@@ -1,0 +1,532 @@
+// slopbox front-end: worktree nav, tabbed xterm sessions, live status + ding.
+'use strict';
+
+// kind → icon name
+const KIND = { claude: 'claude', codex: 'codex', shell: 'terminal', editor: 'pencil', command: 'play' };
+
+// Inline SVG icon set (lucide-style, 24x24, stroke=currentColor).
+const ICONS = {
+  box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
+  terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+  claude: '<path d="M9.94 14.06A2 2 0 0 0 8.5 12.6L2.4 11A.5.5 0 0 1 2.4 10l6.1-1.6A2 2 0 0 0 9.94 7L11.5.9a.5.5 0 0 1 1 0L14.06 7a2 2 0 0 0 1.44 1.44L21.6 10a.5.5 0 0 1 0 1l-6.1 1.56A2 2 0 0 0 14.06 14L12.5 20.1a.5.5 0 0 1-1 0z"/>',
+  codex: '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1"/><path d="M16 3h1a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-1"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+  menu: '<line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  branch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+};
+function svg(name, cls = 'icon') { return `<svg class="${cls}" viewBox="0 0 24 24">${ICONS[name] || ''}</svg>`; }
+function fillIcons(root = document) {
+  root.querySelectorAll('[data-icon]').forEach((e) => {
+    if (e.querySelector(':scope > svg')) return;
+    const cls = 'icon' + (e.classList.contains('icon-sm') ? ' icon-sm' : '') + (e.classList.contains('icon-lg') ? ' icon-lg' : '');
+    e.insertAdjacentHTML('afterbegin', svg(e.dataset.icon, cls));
+  });
+}
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const stateColor = (s) => cssVar(s === 'running' ? '--green' : s === 'exited' ? '--red' : '--faint') || '#888';
+
+const state = {
+  info: null,
+  worktrees: [],
+  selected: null,        // selected worktree path (launch target)
+  sessions: [],          // [{id,title,kind,cwd,state,exitCode,pid}]
+  commands: [],          // custom launchers from .slopbox.toml
+  tabs: [],              // open session ids, in tab order
+  active: null,          // active tab id
+  ports: [],             // [{port,process,worktree,sessionId}]
+  terms: {},             // id -> { term, fit, ws, host }
+  audio: null,
+};
+
+window.__slopbox = state; // exposed for automated tests
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).error || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function toast(msg, kind = 'error') {
+  const bg = kind === 'error' ? 'bg-red-900/90 border-red-600' : 'bg-emerald-900/90 border-emerald-600';
+  const t = el('div', `pointer-events-auto rounded-lg border ${bg} px-3 py-2 text-sm text-white shadow-lg`, msg);
+  $('#toast').appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+// ---- data loading ---------------------------------------------------------
+
+async function loadInfo() {
+  state.info = await api('GET', '/api/info');
+  $('#repo-name').textContent = state.info.repo;
+  if (!state.selected) state.selected = state.info.repoDir;
+  const db = $('#db-btn');
+  db.classList.toggle('hidden', !state.info.postgres);
+  db.onclick = () => window.open('/db/', '_blank');
+}
+
+async function loadCommands() {
+  try { state.commands = await api('GET', '/api/commands'); } catch (_) { state.commands = []; }
+  const box = $('#custom-cmds');
+  box.innerHTML = '';
+  for (const c of state.commands) {
+    const b = el('button', 'launch-btn btn shrink-0 px-2.5 py-1.5 text-sm');
+    b.innerHTML = svg('play', 'icon icon-sm') + `<span class="hidden sm:inline">${c.name}</span>`;
+    b.title = (c.args || []).join(' ');
+    b.onclick = () => launchCommand(c.name);
+    box.appendChild(b);
+  }
+}
+
+async function loadWorktrees() {
+  state.worktrees = await api('GET', '/api/worktrees');
+  // ensure selection still valid
+  if (!state.worktrees.some((w) => w.path === state.selected)) {
+    state.selected = state.info ? state.info.repoDir : (state.worktrees[0] && state.worktrees[0].path);
+  }
+  renderWorktrees();
+  renderContext();
+}
+
+async function loadSessions() {
+  state.sessions = await api('GET', '/api/sessions');
+  renderWorktrees();
+  renderTabs();
+}
+
+async function loadPorts() {
+  try { state.ports = await api('GET', '/api/ports'); } catch (_) { state.ports = []; }
+  renderPorts();
+  renderWorktrees();
+}
+
+// ---- rendering ------------------------------------------------------------
+
+function stateOf(id) {
+  const s = state.sessions.find((x) => x.id === id);
+  return s ? s.state : 'idle';
+}
+
+function dot(st) {
+  // A running session gets an animated "ping" halo + solid core (busy indicator).
+  const wrap = el('span', 'relative inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center');
+  if (st === 'running') {
+    const ping = el('span', 'absolute inline-flex h-full w-full animate-ping rounded-full opacity-75');
+    ping.style.background = stateColor('running');
+    wrap.appendChild(ping);
+  }
+  const core = el('span', 'relative inline-flex h-2 w-2 rounded-full');
+  core.style.background = stateColor(st);
+  wrap.appendChild(core);
+  return wrap;
+}
+
+function gitBadge(w) {
+  const box = el('span', 'ml-auto flex shrink-0 items-center gap-1.5 pl-2 text-[11px]');
+  if (w.added || w.deleted) {
+    const stat = el('span', 'flex items-center gap-1 rounded bg-panel2 px-1.5 py-px');
+    const a = el('span', '', `+${w.added}`); a.style.color = cssVar('--green');
+    const d = el('span', '', `−${w.deleted}`); d.style.color = cssVar('--red');
+    stat.appendChild(a); stat.appendChild(d);
+    box.appendChild(stat);
+  }
+  if (w.isMain) box.appendChild(el('span', 'rounded bg-panel2 px-1.5 py-px text-muted', 'main'));
+  return box;
+}
+
+function gitMeta(w) {
+  // Second-line indicators: dirty · commits ahead of base · ↑/↓ vs origin.
+  const parts = [];
+  if (w.dirty) parts.push('<span style="color:var(--yellow)" title="uncommitted changes">● dirty</span>');
+  if (w.ahead) parts.push(`<span class="text-muted" title="commits ahead of base">${w.ahead} commit${w.ahead === 1 ? '' : 's'}</span>`);
+  if (w.hasUpstream && (w.aheadOrigin || w.behindOrigin)) {
+    let s = '';
+    if (w.aheadOrigin) s += `↑${w.aheadOrigin}`;
+    if (w.behindOrigin) s += ` ↓${w.behindOrigin}`;
+    parts.push(`<span class="text-accent" title="vs origin">${s.trim()}</span>`);
+  } else if (w.hasUpstream) {
+    parts.push('<span style="color:var(--green)" title="in sync with origin">✓ origin</span>');
+  }
+  return parts.join('<span class="text-faint"> · </span>');
+}
+
+function renderWorktrees() {
+  const nav = $('#worktrees');
+  nav.innerHTML = '';
+  for (const w of state.worktrees) {
+    const sel = w.path === state.selected;
+    const row = el('div', `group mb-0.5 cursor-pointer rounded-md px-2 py-1.5 transition ${sel ? 'row-sel' : 'hover-row'}`);
+    const top = el('div', 'flex items-center gap-2');
+    const ic = el('span', 'text-faint'); ic.innerHTML = svg('branch', 'icon icon-sm'); top.appendChild(ic);
+    const name = el('span', 'truncate text-sm ' + (sel ? 'text-app font-medium' : 'text-muted'), w.name);
+    top.appendChild(name);
+    top.appendChild(gitBadge(w));
+    if (state.info && state.info.editor) {
+      const edit = el('button', 'iconbtn shrink-0 px-1');
+      edit.innerHTML = svg('pencil', 'icon icon-sm');
+      edit.title = 'Open in code-server';
+      edit.onclick = (ev) => { ev.stopPropagation(); window.open('/edit/?folder=' + encodeURIComponent(w.path), '_blank'); };
+      top.appendChild(edit);
+    }
+    row.appendChild(top);
+    const branch = el('div', 'truncate pl-6 text-[11px] text-faint', w.detached ? `detached @ ${(w.head || '').slice(0, 7)}` : (w.branch || ''));
+    row.appendChild(branch);
+    const meta = gitMeta(w);
+    if (meta) { const m = el('div', 'flex flex-wrap items-center gap-1.5 pl-6 pt-0.5 text-[11px]'); m.innerHTML = meta; row.appendChild(m); }
+    row.onclick = () => { state.selected = w.path; renderWorktrees(); renderContext(); };
+    row.ondblclick = () => maybeCloseSidebar();
+
+    // nested sessions for this worktree
+    const kids = state.sessions.filter((s) => s.cwd === w.path);
+    for (const s of kids) {
+      const k = el('div', 'hover-row mt-0.5 ml-4 flex items-center gap-2 rounded px-2 py-1 text-xs');
+      k.appendChild(dot(s.state));
+      const ki = el('span', 'text-muted'); ki.innerHTML = svg(KIND[s.kind] || 'play', 'icon icon-sm'); k.appendChild(ki);
+      k.appendChild(el('span', 'truncate text-app', s.title));
+      k.onclick = (ev) => { ev.stopPropagation(); openTab(s); };
+      row.appendChild(k);
+    }
+
+    // ports owned by processes running under this worktree
+    const wtPorts = state.ports.filter((p) => p.worktree === w.path);
+    if (wtPorts.length) {
+      const pwrap = el('div', 'ml-4 mt-1 flex flex-wrap gap-1');
+      for (const p of wtPorts) pwrap.appendChild(portChip(p));
+      row.appendChild(pwrap);
+    }
+    nav.appendChild(row);
+  }
+}
+
+function renderContext() {
+  const w = state.worktrees.find((x) => x.path === state.selected);
+  const box = $('#active-context');
+  box.innerHTML = '';
+  if (!w) { box.appendChild(el('span', 'text-muted', 'Select a worktree')); return; }
+  const ic = el('span', 'text-accent'); ic.innerHTML = svg('branch', 'icon icon-sm'); box.appendChild(ic);
+  box.appendChild(el('span', 'font-semibold text-app', w.name));
+  box.appendChild(el('span', 'text-faint', '·'));
+  box.appendChild(el('span', 'truncate text-muted', w.detached ? 'detached' : (w.branch || '')));
+}
+
+function renderTabs() {
+  const bar = $('#tabs');
+  bar.innerHTML = '';
+  $('#empty-state').style.display = state.tabs.length ? 'none' : 'flex';
+  for (const id of state.tabs) {
+    const s = state.sessions.find((x) => x.id === id) || { id, title: '?', kind: 'shell', state: 'exited' };
+    const act = id === state.active;
+    const tab = el('div', `flex cursor-pointer items-center gap-2 border-r border-app px-3 py-2 ${act ? 'bg-app text-app' : 'bg-panel text-muted hover-row'}`);
+    tab.appendChild(dot(s.state));
+    const ki = el('span', ''); ki.innerHTML = svg(KIND[s.kind] || 'play', 'icon icon-sm'); tab.appendChild(ki);
+    tab.appendChild(el('span', 'whitespace-nowrap text-xs', s.title));
+    const x = el('button', 'iconbtn ml-1 px-1'); x.innerHTML = svg('x', 'icon icon-sm');
+    x.onclick = (ev) => { ev.stopPropagation(); killSession(id); };
+    tab.appendChild(x);
+    tab.onclick = () => setActive(id);
+    bar.appendChild(tab);
+  }
+}
+
+function portChip(p) {
+  const a = el('a', 'btn px-1.5 py-0.5 text-center text-[11px]');
+  a.textContent = p.port;
+  a.title = p.process ? `${p.process} (pid ${p.pid || '?'})` : '';
+  a.href = `http://${location.hostname}:${p.port}/`;
+  a.target = '_blank';
+  return a;
+}
+
+function renderPorts() {
+  // The bottom panel shows ports NOT attributed to a worktree (system/other).
+  const box = $('#ports');
+  box.innerHTML = '';
+  const sys = state.ports.filter((p) => !p.worktree);
+  $('#ports-count').textContent = state.ports.length ? state.ports.length : '';
+  if (!sys.length) { box.appendChild(el('div', 'col-span-3 text-faint', 'none')); return; }
+  for (const p of sys) box.appendChild(portChip(p));
+}
+
+// ---- sessions & terminals -------------------------------------------------
+
+async function launch(kind) {
+  if (!state.selected) { toast('Pick a worktree first'); return; }
+  unlockAudio();
+  try {
+    const s = await api('POST', '/api/sessions', { kind, cwd: state.selected });
+    await loadSessions();
+    openTab(s);
+  } catch (e) { toast(e.message); }
+}
+
+async function launchCommand(name) {
+  if (!state.selected) { toast('Pick a worktree first'); return; }
+  unlockAudio();
+  try {
+    const s = await api('POST', '/api/sessions', { command: name, cwd: state.selected });
+    await loadSessions();
+    openTab(s);
+  } catch (e) { toast(e.message); }
+}
+
+function openTab(s) {
+  if (!state.tabs.includes(s.id)) state.tabs.push(s.id);
+  ensureTerm(s);
+  setActive(s.id);
+  renderTabs();
+  maybeCloseSidebar();
+}
+
+function setActive(id) {
+  state.active = id;
+  for (const [tid, t] of Object.entries(state.terms)) {
+    t.host.classList.toggle('hidden', tid !== id);
+  }
+  const t = state.terms[id];
+  if (t) { requestAnimationFrame(() => { fit(t); t.term.focus(); }); }
+  renderTabs();
+}
+
+function ensureTerm(s) {
+  if (state.terms[s.id]) return;
+  const host = el('div', 'term-host hidden');
+  $('#term-area').appendChild(host);
+
+  const term = new Terminal({
+    cursorBlink: true,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 13,
+    theme: {
+      background: cssVar('--term-bg') || '#0a0a0b',
+      foreground: cssVar('--term-fg') || '#e4e4e7',
+      cursor: cssVar('--accent') || '#a855f7',
+      selectionBackground: '#33415580',
+    },
+    scrollback: 10000,
+  });
+  const fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  try { term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch (_) {}
+  term.open(host);
+
+  const rec = { term, fit: fitAddon, ws: null, host };
+  state.terms[s.id] = rec;
+  fit(rec);
+  connectWS(s.id);
+
+  term.onData((d) => { if (rec.ws && rec.ws.readyState === 1) rec.ws.send(JSON.stringify({ type: 'data', data: d })); });
+  term.onResize(({ cols, rows }) => { if (rec.ws && rec.ws.readyState === 1) rec.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
+}
+
+function connectWS(id) {
+  const rec = state.terms[id];
+  if (!rec) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/term/${id}`);
+  ws.binaryType = 'arraybuffer';
+  rec.ws = ws;
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === 'string') rec.term.write(ev.data);
+    else rec.term.write(new Uint8Array(ev.data));
+  };
+  ws.onopen = () => { const { cols, rows } = rec.term; ws.send(JSON.stringify({ type: 'resize', cols, rows })); };
+  ws.onclose = () => { rec.ws = null; };
+}
+
+function fit(rec) {
+  try { rec.fit.fit(); } catch (_) {}
+}
+
+async function killSession(id) {
+  try { await api('DELETE', `/api/sessions/${id}`); } catch (e) { /* may already be gone */ }
+  const rec = state.terms[id];
+  if (rec) { if (rec.ws) rec.ws.close(); rec.term.dispose(); rec.host.remove(); delete state.terms[id]; }
+  state.tabs = state.tabs.filter((t) => t !== id);
+  if (state.active === id) state.active = state.tabs[state.tabs.length - 1] || null;
+  await loadSessions();
+  if (state.active) setActive(state.active); else renderTabs();
+}
+
+// ---- live status (SSE) + ding --------------------------------------------
+
+function connectEvents() {
+  const es = new EventSource('/api/events');
+  es.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
+    const s = state.sessions.find((x) => x.id === m.id);
+    if (s) { s.state = m.state; if (m.state === 'exited') s.exitCode = m.exitCode; }
+    renderWorktrees();
+    renderTabs();
+    if (m.ding) { ding(); flashTitle(`✅ ${m.title} done`); }
+  };
+  es.onerror = () => { /* EventSource auto-reconnects */ };
+}
+
+function ding() {
+  try {
+    const ctx = state.audio || (state.audio = new (window.AudioContext || window.webkitAudioContext)());
+    const now = ctx.currentTime;
+    [880, 1320].forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      o.connect(g); g.connect(ctx.destination);
+      const t = now + i * 0.12;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.18, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      o.start(t); o.stop(t + 0.26);
+    });
+  } catch (_) {}
+}
+
+function unlockAudio() {
+  try {
+    if (!state.audio) state.audio = new (window.AudioContext || window.webkitAudioContext)();
+    if (state.audio.state === 'suspended') state.audio.resume();
+  } catch (_) {}
+}
+
+let titleTimer = null;
+function flashTitle(msg) {
+  document.title = msg;
+  clearTimeout(titleTimer);
+  titleTimer = setTimeout(() => { document.title = 'slopbox'; }, 5000);
+}
+
+// ---- new worktree dialog (minimal) ---------------------------------------
+
+async function newWorktree() {
+  const branch = prompt('New worktree — branch name (created off current HEAD):');
+  if (!branch) return;
+  try {
+    await api('POST', '/api/worktrees', { name: branch, branch, newBranch: true });
+    await loadWorktrees();
+    toast(`Created worktree ${branch}`, 'ok');
+  } catch (e) { toast(e.message); }
+}
+
+// ---- wiring ---------------------------------------------------------------
+
+function isMobile() { return window.innerWidth < 768; }
+function openSidebar() { $('#sidebar').classList.remove('-translate-x-full'); $('#backdrop').classList.remove('hidden'); }
+function closeSidebar() { $('#sidebar').classList.add('-translate-x-full'); $('#backdrop').classList.add('hidden'); }
+function maybeCloseSidebar() { if (isMobile()) closeSidebar(); }
+
+// ---- theme (system / light / dark) ---------------------------------------
+
+function currentTheme() { return localStorage.getItem('slopbox-theme') || 'system'; }
+function applyTheme(t) {
+  const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.classList.toggle('dark', dark);
+  document.querySelectorAll('[data-theme]').forEach((b) => b.classList.toggle('active', b.dataset.theme === t));
+}
+function setTheme(t) { localStorage.setItem('slopbox-theme', t); applyTheme(t); }
+
+function wire() {
+  document.querySelectorAll('[data-launch]').forEach((b) => {
+    b.onclick = () => launch(b.getAttribute('data-launch'));
+  });
+  $('#new-worktree').onclick = newWorktree;
+  $('#menu-btn').onclick = () => ($('#sidebar').classList.contains('-translate-x-full') ? openSidebar() : closeSidebar());
+  $('#backdrop').onclick = closeSidebar;
+  document.querySelectorAll('[data-theme]').forEach((b) => { b.onclick = () => setTheme(b.dataset.theme); });
+  applyTheme(currentTheme());
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (currentTheme() === 'system') applyTheme('system'); });
+  window.addEventListener('resize', () => { const t = state.terms[state.active]; if (t) fit(t); });
+}
+
+// ---- passkey auth ---------------------------------------------------------
+
+const SWA = window.SimpleWebAuthnBrowser;
+
+async function passkeyRegister(code, label) {
+  const opts = await api('POST', '/api/auth/register/begin', { code, label });
+  const att = await SWA.startRegistration({ optionsJSON: opts.publicKey });
+  await api('POST', '/api/auth/register/finish', att);
+}
+
+async function passkeyLogin() {
+  const opts = await api('POST', '/api/auth/login/begin', {});
+  const asr = await SWA.startAuthentication({ optionsJSON: opts.publicKey });
+  await api('POST', '/api/auth/login/finish', asr);
+}
+
+function loginErr(e) {
+  const box = $('#login-err');
+  box.textContent = e.message || String(e);
+  box.classList.remove('hidden');
+}
+
+function showLogin(status) {
+  $('#app').style.display = 'none';
+  const overlay = $('#login');
+  overlay.classList.remove('hidden');
+  overlay.classList.add('flex');
+  $('#login-rp').textContent = status.rpId || '';
+  if (status.registered) {
+    $('#login-signin').classList.remove('hidden');
+    $('#passkey-login').onclick = async () => { try { await passkeyLogin(); location.reload(); } catch (e) { loginErr(e); } };
+  }
+  $('#passkey-register').onclick = async () => {
+    try { await passkeyRegister($('#reg-code').value.trim(), $('#reg-label').value.trim() || 'passkey'); location.reload(); }
+    catch (e) { loginErr(e); }
+  };
+}
+
+// Add an additional passkey while already signed in (no bootstrap code needed).
+async function addPasskey() {
+  const label = prompt('Label for the new passkey (e.g. "phone"):');
+  if (label === null) return;
+  try { await passkeyRegister('', label || 'passkey'); toast('Passkey added', 'ok'); }
+  catch (e) { toast(e.message); }
+}
+
+async function initApp(authEnabled) {
+  wire();
+  if (authEnabled) {
+    $('#add-passkey').classList.remove('hidden');
+    $('#add-passkey').onclick = addPasskey;
+    $('#logout').classList.remove('hidden');
+    $('#logout').onclick = async () => { await api('POST', '/api/auth/logout', {}); location.reload(); };
+  }
+  await loadInfo();
+  await loadCommands();
+  await loadWorktrees();
+  await loadSessions();
+  await loadPorts();
+  connectEvents();
+  setInterval(loadPorts, 5000);
+  setInterval(loadWorktrees, 15000); // refresh git stats
+}
+
+async function main() {
+  fillIcons();
+  applyTheme(currentTheme());
+  let status = { enabled: false, authenticated: true };
+  try { status = await api('GET', '/api/auth/status'); } catch (_) {}
+  if (status.enabled && !status.authenticated) {
+    showLogin(status);
+    return;
+  }
+  await initApp(status.enabled);
+}
+
+main().catch((e) => toast('startup: ' + e.message));

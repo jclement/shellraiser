@@ -1,0 +1,24 @@
+# slopbox dev toolchain + tasks.  `mise install` then `mise run <task>`.
+[tools]
+go = "1.26"
+goreleaser = "latest"
+
+[tasks.build]
+description = "Build the slopbox binary into dist/"
+run = "CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/slopbox ./cmd/slopbox"
+
+[tasks.test]
+description = "Run the Go tests"
+run = "go test ./..."
+
+[tasks.dev]
+description = "Build the image and run a box in the foreground (--rm, live logs)"
+run = "./slopbox.sh start --rebuild --fg"
+
+[tasks.nuke]
+description = "Nuke this repo's box + its persistent volume/state"
+run = "./slopbox.sh nuke"
+
+[tasks.package]
+description = "Snapshot release build (goreleaser, no publish)"
+run = "goreleaser release --snapshot --clean"

@@ -1,0 +1,33 @@
+# .slopbox.toml — checked-in project config (safe to commit).
+# Override locally with .slopbox.local.toml (gitignore it); env vars win over both.
+# Precedence (highest first): env  →  .slopbox.local.toml  →  .slopbox.toml  →  defaults
+
+# addr          = ":7000"        # listen address
+# worktrees_dir = ""             # default: $SLOPBOX_WORKTREES or <repo>/.worktrees
+# postgres      = true           # run postgres + pgweb (/db)
+# code          = true           # run code-server (/edit, per-worktree VS Code)
+# no_auth       = false          # disable auth entirely (trusted local only)
+# rp_id         = "example.com"  # pin the WebAuthn RP ID (else discovered from Host)
+
+# Override the built-in launcher commands (argv arrays):
+# claude = ["claude", "--dangerously-skip-permissions"]
+# codex  = ["codex", "--dangerously-bypass-approvals-and-sandbox"]
+# editor = ["hx"]
+# shell  = ["zsh"]
+
+# Custom launchers — appear as extra buttons in the toolbar. These can ONLY be
+# defined in .slopbox files (not env). Each runs in the selected worktree.
+[[commands]]
+name = "dev"
+icon = "▶"
+args = ["mise", "run", "dev"]
+
+[[commands]]
+name = "test"
+icon = "✓"
+args = ["mise", "run", "test"]
+
+[[commands]]
+name = "psql"
+icon = "⛁"
+args = ["psql", "postgres://postgres:postgres@127.0.0.1:5432/postgres"]
