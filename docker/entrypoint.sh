@@ -22,18 +22,12 @@ run_user() {
 # so the base image stays lean and only pulls what you actually enable.
 ensure_code_server() {
   [ -x "$HOME_DIR/.local/bin/code-server" ] && return 0
+  # Remove any stale/broken install (e.g. a root-owned one from an older image)
+  # AS ROOT so the fresh ubuntu-user install can't be blocked by it.
+  rm -rf "$HOME_DIR"/.local/lib/code-server-* "$HOME_DIR"/.local/bin/code-server \
+         "$HOME_DIR"/.cache/code-server 2>/dev/null || true
   echo "slopbox: installing code-server into the home volume (first run)…"
   run_user sh -c 'curl -fsSL https://code-server.dev/install.sh | sh -s -- --method standalone --prefix "$HOME/.local"'
-}
-ensure_cloudflared() {
-  [ -x "$HOME_DIR/.local/bin/cloudflared" ] && return 0
-  echo "slopbox: downloading cloudflared…"
-  run_user sh -c "mkdir -p \$HOME/.local/bin && curl -fsSL 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture)' -o \$HOME/.local/bin/cloudflared && chmod +x \$HOME/.local/bin/cloudflared"
-}
-ensure_gatecrash() {
-  [ -x "$HOME_DIR/.local/bin/gatecrash" ] && return 0
-  echo "slopbox: downloading gatecrash client…"
-  run_user sh -c "mkdir -p \$HOME/.local/bin && curl -fsSL 'https://github.com/jclement/gatecrash/releases/latest/download/gatecrash_linux_$(dpkg --print-architecture)' -o \$HOME/.local/bin/gatecrash && chmod +x \$HOME/.local/bin/gatecrash"
 }
 
 # 1. Seed the (possibly empty / foreign-owned) persistent home mount. Make the
@@ -192,19 +186,28 @@ if [ "${SLOPBOX_SSH:-0}" = "1" ] || [ -n "${SLOPBOX_SSH_PUBKEY:-}" ]; then
   start_sshd
 fi
 
-# 4. Optional external access, selected by which env vars are present. The
-#    tunnel binary is downloaded into the home volume on first use.
-if [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ] && ensure_cloudflared; then
-  echo "slopbox: starting cloudflared tunnel"
-  run_user cloudflared tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
-elif [ -n "${GATECRASH_SERVER:-}" ] && [ -n "${GATECRASH_TOKEN:-}" ] && ensure_gatecrash; then
-  echo "slopbox: starting gatecrash tunnel → $GATECRASH_SERVER"
-  run_user gatecrash --server "$GATECRASH_SERVER" --token "$GATECRASH_TOKEN" \
-    ${GATECRASH_HOST_KEY:+--host-key "$GATECRASH_HOST_KEY"} \
-    --target "127.0.0.1:${PORT}" &
-elif [ -f /etc/gatecrash/client.toml ] && ensure_gatecrash; then
-  echo "slopbox: starting gatecrash from /etc/gatecrash/client.toml"
-  run_user gatecrash &
+# 4. Tailscale (optional, private mesh) — gives the box its own tailnet IP +
+#    MagicDNS name (the SLOP_ID), reachable from your devices with every port
+#    available, no public exposure. Userspace networking → no NET_ADMIN/tun
+#    needed (works on Docker Desktop). State persists in the home volume.
+if [ -n "${TAILSCALE_KEY:-}" ] || [ "${SLOPBOX_TAILSCALE:-0}" = "1" ]; then
+  if command -v tailscaled >/dev/null 2>&1; then
+    TS_STATE="$HOME_DIR/.local/share/slopbox/tailscale"
+    mkdir -p "$TS_STATE" /var/run/tailscale
+    tailscaled --tun=userspace-networking --state="$TS_STATE/state" \
+      --socket=/var/run/tailscale/tailscaled.sock \
+      >"$HOME_DIR/.local/share/slopbox/tailscaled.log" 2>&1 &
+    sleep 1
+    if [ -n "${TAILSCALE_KEY:-}" ]; then
+      tailscale up --authkey="$TAILSCALE_KEY" --hostname="${SLOP_ID:-slopbox}" --accept-routes >/dev/null 2>&1 \
+        && echo "slopbox: tailscale up as ${SLOP_ID:-slopbox} (tailnet)" \
+        || echo "slopbox: ⚠ tailscale up failed"
+    else
+      echo "slopbox: tailscaled started — run 'sudo tailscale up --hostname=${SLOP_ID:-slopbox}' to log in"
+    fi
+  else
+    echo "slopbox: ⚠ tailscale not installed"
+  fi
 fi
 
 # 5. Run the app as the unprivileged user, with HOME + tool paths integrated so

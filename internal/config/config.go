@@ -29,6 +29,7 @@ type Config struct {
 	WorktreesDir string `toml:"worktrees_dir"`
 	NoAuth       bool   `toml:"no_auth"`
 	Token        string `toml:"token"`
+	ID           string `toml:"id"`       // box identity (else the startup folder name)
 	RPID         string `toml:"rp_id"`    // pin the WebAuthn RP ID (else discovered from Host)
 	Postgres     *bool  `toml:"postgres"` // nil ⇒ default (enabled)
 	CodeServer   *bool  `toml:"code"`     // code-server at /edit; nil ⇒ default (enabled)
@@ -90,6 +91,9 @@ func mergeFile(c *Config, path string) error {
 	if md.IsDefined("token") {
 		c.Token = f.Token
 	}
+	if md.IsDefined("id") {
+		c.ID = f.ID
+	}
 	if md.IsDefined("rp_id") {
 		c.RPID = f.RPID
 	}
@@ -149,6 +153,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("SLOPBOX_TOKEN"); v != "" {
 		c.Token = v
+	}
+	if v := os.Getenv("SLOP_ID"); v != "" {
+		c.ID = v
 	}
 	if v := os.Getenv("SLOPBOX_RP_ID"); v != "" {
 		c.RPID = v

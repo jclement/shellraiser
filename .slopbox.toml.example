@@ -2,6 +2,7 @@
 # Override locally with .slopbox.local.toml (gitignore it); env vars win over both.
 # Precedence (highest first): env  →  .slopbox.local.toml  →  .slopbox.toml  →  defaults
 
+# id            = "barreleye"    # box identity → sb_<id> container + sb_<id>_vol volume + tailnet name
 # addr          = ":7000"        # listen address
 # name          = "my-project"   # header repo name (else derived from git remote)
 # worktrees_dir = ""             # default: $SLOPBOX_WORKTREES or <repo>/.worktrees

@@ -55,9 +55,18 @@ RUN arch="$(dpkg --print-architecture)" \
     && mv "/tmp/pgweb_linux_${arch}" /usr/local/bin/pgweb \
     && chmod +x /usr/local/bin/pgweb && rm /tmp/pgweb.zip
 
-# code-server (/edit), cloudflared, and the gatecrash client are NOT baked in —
-# they're downloaded into the persistent home (/home/ubuntu/.local) on first use
-# by the entrypoint, so the image stays lean and only pulls what you actually use.
+# Tailscale — private-mesh remote access (the box gets its own tailnet IP +
+# MagicDNS name, every port reachable, no public exposure). Started by the
+# entrypoint only when TAILSCALE_KEY / SLOPBOX_TAILSCALE is set.
+RUN arch="$(dpkg --print-architecture)" \
+    && ver="$(curl -fsSL https://pkgs.tailscale.com/stable/ | grep -oE "tailscale_[0-9.]+_${arch}\.tgz" | head -1 | sed -E 's/tailscale_([0-9.]+)_.*/\1/')" \
+    && curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${ver}_${arch}.tgz" -o /tmp/ts.tgz \
+    && tar -xzf /tmp/ts.tgz -C /tmp \
+    && mv "/tmp/tailscale_${ver}_${arch}/tailscale" "/tmp/tailscale_${ver}_${arch}/tailscaled" /usr/local/bin/ \
+    && rm -rf /tmp/ts.tgz "/tmp/tailscale_${ver}_${arch}"
+
+# code-server (/edit) is NOT baked in — it's downloaded into the persistent home
+# (/home/ubuntu/.local) on first use by the entrypoint, so the image stays lean.
 
 # Static docker CLI — talk to a passed-through host docker socket. No daemon,
 # no docker-in-docker.

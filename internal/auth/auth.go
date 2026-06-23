@@ -118,6 +118,13 @@ func New(path, token, rpOverride string, noAuth bool) (*Manager, error) {
 // BootstrapCode returns the code that authorizes registering a new passkey.
 func (m *Manager) BootstrapCode() string { return m.data.Bootstrap }
 
+// HasCredentials reports whether any passkey is registered (on any host).
+func (m *Manager) HasCredentials() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.data.Creds) > 0
+}
+
 // rotateBootstrap issues a fresh bootstrap code after one is used, so a code
 // leaked via the logs can't be reused to enroll more passkeys.
 func (m *Manager) rotateBootstrap() {

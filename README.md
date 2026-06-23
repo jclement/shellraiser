@@ -52,8 +52,7 @@ docker compose up -d && docker compose logs -f
 ```bash
 docker run -d --name slopbox \
   -v "$PWD:/work" \                 # the repo
-  -v slopbox-home:/home/ubuntu \    # persistent state
-  -v slopbox-pg:/home/ubuntu/.local/share/slopbox/postgres \  # postgres data
+  -v slopbox-home:/home/ubuntu \    # ALL persistent state (incl. postgres)
   -p 7700:7000 \                    # host 7700, NOT 7000 (see note)
   ghcr.io/jclement/slopbox:latest
 ```
@@ -88,7 +87,7 @@ the logs (`docker logs slopbox | grep -i bootstrap`).
 
 **Toolchain in the image:** zsh + starship, git, tmux, vim, helix, Fresh
 (getfresh.dev), mise, Node, Claude Code, Codex, a static docker client,
-cloudflared, the gatecrash client, Postgres + pgweb.
+Tailscale, Postgres + pgweb.
 
 ---
 
@@ -158,15 +157,23 @@ ssh ubuntu@localhost -p 2222 -D 1080                 # SOCKS to ANY internal por
 Key-only auth (no passwords), host keys persist in the home volume, TCP
 forwarding enabled. Enable manually with `-e SLOPBOX_SSH=1 -e SLOPBOX_SSH_PUBKEY="$(cat key.pub)" -p 2222:22`.
 
-### Tunnels
+### Tailscale (private mesh, recommended for remote)
 
-To expose the box beyond localhost, set env vars and a tunnel comes up automatically:
+Give the box its own tailnet IP + MagicDNS name (its **`id`**), reachable from any
+of your devices with **every port available** — no public exposure, no per-port
+mapping. Userspace networking → no `NET_ADMIN`/`/dev/net/tun` needed (works on
+Docker Desktop). State persists in the home volume.
 
-| Method | Env vars |
-|---|---|
-| **Cloudflare Tunnel** | `CLOUDFLARE_TUNNEL_TOKEN` |
-| **gatecrash** ([jclement/gatecrash](https://github.com/jclement/gatecrash)) | `GATECRASH_SERVER`, `GATECRASH_TOKEN`, `GATECRASH_HOST_KEY` — or mount `/etc/gatecrash/client.toml` |
-| **none** | local port only — bring your own SSH tunnel / Tailscale / proxy |
+```bash
+TAILSCALE_KEY=tskey-auth-... ./slopbox.sh start    # auto-joins the tailnet as <id>
+./slopbox.sh start --tailscale                      # then: slopbox.sh ish; sudo tailscale up
+```
+
+Then reach `http://<id>:7000/` and any dev port at `<id>:3000` from your tailnet.
+
+> slopbox deliberately ships **no public tunnels** (Cloudflare/gatecrash) —
+> exposing a box that runs agents in danger mode to the open internet is too
+> sharp an edge. Use Tailscale (private) or SSH.
 
 **Docker access:** add `-v /var/run/docker.sock:/var/run/docker.sock` (or
 `./run.sh --docker`) to drive containers from a session. The image ships only the

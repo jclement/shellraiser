@@ -228,7 +228,11 @@ func (s *Server) printAccess() {
 		return
 	}
 	ui.Ready(url)
-	ui.Info("auth", "register your first passkey with bootstrap code: %s", s.auth.BootstrapCode())
+	if s.auth.HasCredentials() {
+		ui.Info("auth", "passkey sign-in (registered) — add a passkey from the UI when signed in")
+	} else {
+		ui.Info("auth", "register your first passkey with bootstrap code: %s", s.auth.BootstrapCode())
+	}
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

@@ -33,10 +33,10 @@ vision and [DESIGN.md](DESIGN.md) for the architecture.
   `--prefix=db`), data on its own volume; degrades gracefully if it can't init.
 - **`slopbox.sh` manager** — `start/list/stop/ish/open/logs/nuke`, fzf box-picker
   with preview; `run.sh` is an alias for `start`.
-- **Tunnels** — `cloudflared` and the `gatecrash` client are in the image,
-  started from env vars.
+- **Tunnels** — Tailscale (private mesh) gives the box a tailnet IP;
+  no public tunnels (removed as too dangerous). SSH + /p/ proxy round it out.
 - **Image** — multi-stage Dockerfile: Ubuntu + zsh/starship, vim/helix/Fresh,
-  mise, Node, claude/codex, docker client, postgres/pgweb, cloudflared/gatecrash.
+  mise, Node, claude/codex, docker client, postgres/pgweb, tailscale.
 - **`run.sh`**, **`docker-compose.yml`**, **CI** (multi-arch → GHCR).
 
 ### Verified end-to-end
