@@ -6,35 +6,51 @@ import (
 	"sync"
 )
 
-// colorStore persists per-worktree UI color tags (keyed by worktree path).
-type colorStore struct {
+// wtMeta is per-worktree UI metadata (not tracked by git).
+type wtMeta struct {
+	Color string `json:"color,omitempty"`
+	Name  string `json:"name,omitempty"` // custom display name, independent of branch
+}
+
+// metaStore persists per-worktree UI metadata, keyed by worktree path.
+type metaStore struct {
 	path string
 	mu   sync.Mutex
-	m    map[string]string
+	m    map[string]*wtMeta
 }
 
-func newColorStore(path string) *colorStore {
-	c := &colorStore{path: path, m: map[string]string{}}
+func newMetaStore(path string) *metaStore {
+	s := &metaStore{path: path, m: map[string]*wtMeta{}}
 	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &c.m)
+		_ = json.Unmarshal(b, &s.m)
 	}
-	return c
+	return s
 }
 
-func (c *colorStore) get(path string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.m[path]
+func (s *metaStore) get(path string) (color, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if m := s.m[path]; m != nil {
+		return m.Color, m.Name
+	}
+	return "", ""
 }
 
-func (c *colorStore) set(path, color string) {
-	c.mu.Lock()
-	if color == "" {
-		delete(c.m, path)
-	} else {
-		c.m[path] = color
+func (s *metaStore) setColor(path, color string) { s.update(path, func(m *wtMeta) { m.Color = color }) }
+func (s *metaStore) setName(path, name string)   { s.update(path, func(m *wtMeta) { m.Name = name }) }
+
+func (s *metaStore) update(path string, fn func(*wtMeta)) {
+	s.mu.Lock()
+	m := s.m[path]
+	if m == nil {
+		m = &wtMeta{}
+		s.m[path] = m
 	}
-	b, _ := json.MarshalIndent(c.m, "", "  ")
-	c.mu.Unlock()
-	_ = os.WriteFile(c.path, b, 0o600)
+	fn(m)
+	if m.Color == "" && m.Name == "" {
+		delete(s.m, path)
+	}
+	b, _ := json.MarshalIndent(s.m, "", "  ")
+	s.mu.Unlock()
+	_ = os.WriteFile(s.path, b, 0o600)
 }

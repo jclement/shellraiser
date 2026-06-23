@@ -25,6 +25,7 @@ type Command struct {
 // Config is the merged runtime configuration.
 type Config struct {
 	Addr         string `toml:"addr"`
+	Name         string `toml:"name"` // repo display name (else derived from git remote)
 	WorktreesDir string `toml:"worktrees_dir"`
 	NoAuth       bool   `toml:"no_auth"`
 	Token        string `toml:"token"`
@@ -72,6 +73,9 @@ func mergeFile(c *Config, path string) error {
 	}
 	if md.IsDefined("addr") {
 		c.Addr = f.Addr
+	}
+	if md.IsDefined("name") {
+		c.Name = f.Name
 	}
 	if md.IsDefined("worktrees_dir") {
 		c.WorktreesDir = f.WorktreesDir

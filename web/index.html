@@ -41,7 +41,7 @@
     .border-app{border-color:var(--border)} .text-app{color:var(--text)}
     .text-muted{color:var(--muted)} .text-faint{color:var(--faint)} .text-accent{color:var(--accent)}
     .hover-row:hover{background:var(--hover)}
-    .icon{width:1rem;height:1rem;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto;display:inline-block;vertical-align:-2px}
+    .icon{width:1rem;height:1rem;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto;display:inline-block;vertical-align:middle}
     .icon-sm{width:.8rem;height:.8rem;stroke-width:2}
     .icon-lg{width:2.25rem;height:2.25rem;opacity:.5}
     .btn{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);color:var(--text);border-radius:.375rem;background:transparent;transition:border-color .15s,color .15s,background .15s}
@@ -75,7 +75,7 @@
         <span id="login-rp" class="ml-auto text-[11px] text-faint"></span>
       </div>
       <div id="login-signin" class="hidden border-b border-app px-4 py-4">
-        <button id="passkey-login" class="btn btn-primary w-full justify-center px-3 py-2 text-sm font-medium"><span data-icon="key" class="icon-sm"></span> Sign in with passkey</button>
+        <button id="passkey-login" class="btn btn-primary w-full justify-center px-3 py-2 text-sm font-medium"><span data-icon="key" class="icon-sm"></span><span>Sign in with passkey</span></button>
       </div>
       <div id="login-register" class="px-4 py-4">
         <div class="mb-3 text-[11px] font-semibold uppercase tracking-wider text-faint">Register a passkey</div>
@@ -102,7 +102,7 @@
       </div>
 
       <div class="px-3 py-3">
-        <button id="new-worktree" class="btn w-full justify-center px-3 py-2 text-sm"><span data-icon="plus" class="icon-sm"></span> New Worktree</button>
+        <button id="new-worktree" class="btn w-full justify-center px-3 py-2 text-sm"><span data-icon="plus" class="icon-sm"></span><span>New Worktree</span></button>
       </div>
 
       <div class="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-faint">Worktrees</div>

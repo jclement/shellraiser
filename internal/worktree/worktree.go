@@ -14,15 +14,16 @@ import (
 
 // Worktree is one entry from `git worktree list`, annotated with git stats.
 type Worktree struct {
-	Path     string `json:"path"`
-	Name     string `json:"name"`
-	Branch   string `json:"branch"`
-	Head     string `json:"head"`
-	Detached bool   `json:"detached"`
-	Bare     bool   `json:"bare"`
-	Locked   bool   `json:"locked"`
-	IsMain   bool   `json:"isMain"`
-	Color    string `json:"color"` // UI color tag (set by the server, not git)
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	Branch      string `json:"branch"`
+	Head        string `json:"head"`
+	Detached    bool   `json:"detached"`
+	Bare        bool   `json:"bare"`
+	Locked      bool   `json:"locked"`
+	IsMain      bool   `json:"isMain"`
+	Color       string `json:"color"`       // UI color tag (set by the server, not git)
+	DisplayName string `json:"displayName"` // custom label, independent of branch
 
 	// Stats (relative to the main worktree's branch, and to the upstream).
 	Added        int  `json:"added"`        // lines added (committed vs base + uncommitted)
@@ -172,6 +173,40 @@ func Remove(repoDir, path string, force bool) error {
 func IsRepo(dir string) bool {
 	_, err := git(dir, "rev-parse", "--is-inside-work-tree")
 	return err == nil
+}
+
+// Branches lists local branch names (newest-committed first) for the new-worktree
+// picker.
+func Branches(repoDir string) []string {
+	out, err := git(repoDir, "for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads")
+	if err != nil {
+		return nil
+	}
+	var names []string
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		if b := strings.TrimSpace(sc.Text()); b != "" {
+			names = append(names, b)
+		}
+	}
+	return names
+}
+
+// RemoteName returns a human repo name from the origin remote URL (e.g.
+// "git@host:org/slopbox.git" -> "slopbox"), or "" if there's no remote. Used so
+// the header shows the project, not the mount path basename ("work").
+func RemoteName(repoDir string) string {
+	out, err := git(repoDir, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	u := strings.TrimSpace(string(out))
+	u = strings.TrimSuffix(u, ".git")
+	u = strings.TrimRight(u, "/")
+	if i := strings.LastIndexAny(u, "/:"); i >= 0 {
+		u = u[i+1:]
+	}
+	return u
 }
 
 // Repair re-links any git worktrees found as folders under worktreesDir so they

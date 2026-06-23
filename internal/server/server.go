@@ -30,7 +30,8 @@ type Server struct {
 	cfg          config.Config
 	mgr          *session.Manager
 	auth         *auth.Manager
-	colors       *colorStore
+	meta         *metaStore
+	repoName     string
 	commands     map[string]config.Command
 }
 
@@ -81,12 +82,22 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
+	// Repo display name: config override → git remote → mount-path basename.
+	repoName := cfg.Name
+	if repoName == "" {
+		repoName = worktree.RemoteName(repoDir)
+	}
+	if repoName == "" {
+		repoName = filepath.Base(repoDir)
+	}
+
 	return &Server{
 		repoDir:      repoDir,
 		worktreesDir: worktreesDir,
 		cfg:          cfg,
 		auth:         am,
-		colors:       newColorStore(filepath.Join(authDir, "worktree-colors.json")),
+		meta:         newMetaStore(filepath.Join(authDir, "worktree-meta.json")),
+		repoName:     repoName,
 		commands:     commands,
 		mgr: session.NewManager(session.Commands{
 			Shell: cfg.Shell, Editor: cfg.Editor, Claude: cfg.Claude, Codex: cfg.Codex,
@@ -101,8 +112,10 @@ func (s *Server) Run() error {
 	mux.HandleFunc("GET /api/info", s.handleInfo)
 	mux.HandleFunc("GET /api/commands", s.handleCommands)
 	mux.HandleFunc("GET /api/worktrees", s.handleListWorktrees)
+	mux.HandleFunc("GET /api/branches", s.handleListBranches)
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("POST /api/worktrees/color", s.handleSetWorktreeColor)
+	mux.HandleFunc("POST /api/worktrees/rename", s.handleRenameWorktree)
 	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
@@ -221,12 +234,16 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
-		"repo":         filepath.Base(s.repoDir),
+		"repo":         s.repoName,
 		"repoDir":      s.repoDir,
 		"worktreesDir": s.worktreesDir,
 		"postgres":     s.cfg.PostgresEnabled(),
 		"editor":       s.cfg.CodeServerEnabled(),
 	})
+}
+
+func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, worktree.Branches(s.repoDir))
 }
 
 func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +261,7 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i := range trees {
-		trees[i].Color = s.colors.get(trees[i].Path)
+		trees[i].Color, trees[i].DisplayName = s.meta.get(trees[i].Path)
 	}
 	writeJSON(w, trees)
 }
@@ -258,7 +275,20 @@ func (s *Server) handleSetWorktreeColor(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	s.colors.set(req.Path, req.Color)
+	s.meta.setColor(req.Path, req.Color)
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleRenameWorktree(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	s.meta.setName(req.Path, strings.TrimSpace(req.Name))
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

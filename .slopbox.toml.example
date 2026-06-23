@@ -3,6 +3,7 @@
 # Precedence (highest first): env  →  .slopbox.local.toml  →  .slopbox.toml  →  defaults
 
 # addr          = ":7000"        # listen address
+# name          = "my-project"   # header repo name (else derived from git remote)
 # worktrees_dir = ""             # default: $SLOPBOX_WORKTREES or <repo>/.worktrees
 # postgres      = true           # run postgres + pgweb (/db)
 # code          = true           # run code-server (/edit, per-worktree VS Code)

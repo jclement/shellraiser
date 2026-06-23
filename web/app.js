@@ -23,6 +23,7 @@ const ICONS = {
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
 };
 const WT_COLORS = ['', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 function svg(name, cls = 'icon') { return `<svg class="${cls}" viewBox="0 0 24 24">${ICONS[name] || ''}</svg>`; }
@@ -87,15 +88,26 @@ function modal({ title, bodyHTML, fields, actions }) {
     if (bodyHTML) body.innerHTML = bodyHTML;
     const inputs = {};
     for (const f of fields || []) {
+      if (f.type === 'checkbox') {
+        const wrap = el('label', 'mt-3 flex cursor-pointer items-center gap-2 text-sm text-app');
+        const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!f.value;
+        wrap.appendChild(cb); wrap.appendChild(el('span', '', f.label));
+        inputs[f.name] = cb; body.appendChild(wrap); continue;
+      }
       body.appendChild(el('label', 'mb-1 mt-3 block text-[11px] text-muted', f.label));
       const inp = el('input', 'input w-full px-2.5 py-2 text-sm text-app' + (f.mono ? ' tracking-wider' : ''));
       inp.placeholder = f.placeholder || ''; inp.value = f.value || '';
+      if (f.datalist && f.datalist.length) {
+        const dl = el('datalist'); dl.id = 'dl-' + f.name;
+        for (const o of f.datalist) { const opt = el('option'); opt.value = o; dl.appendChild(opt); }
+        inp.setAttribute('list', dl.id); body.appendChild(dl);
+      }
       inputs[f.name] = inp; body.appendChild(inp);
     }
     card.appendChild(body);
     const foot = el('div', 'flex justify-end gap-2 border-t border-app px-4 py-3');
     const done = (val) => { root.classList.add('hidden'); root.classList.remove('flex'); document.removeEventListener('keydown', onKey); resolve(val); };
-    const values = () => Object.fromEntries(Object.entries(inputs).map(([k, v]) => [k, v.value.trim()]));
+    const values = () => Object.fromEntries(Object.entries(inputs).map(([k, v]) => [k, v.type === 'checkbox' ? v.checked : v.value.trim()]));
     for (const a of actions || []) {
       const cls = a.primary ? 'btn-primary' : a.danger ? 'btn-danger' : '';
       const b = el('button', `btn px-3 py-1.5 text-sm ${cls}`, a.label);
@@ -136,6 +148,7 @@ async function promptModal(title, field, confirmLabel = 'OK') {
 async function loadInfo() {
   state.info = await api('GET', '/api/info');
   $('#repo-name').textContent = state.info.repo;
+  $('#repo-name').title = `repository: ${state.info.repoDir}`;
   if (!state.selected) state.selected = state.info.repoDir;
   const db = $('#db-btn');
   db.classList.toggle('hidden', !state.info.postgres);
@@ -253,17 +266,21 @@ function renderWorktrees() {
     row.style.paddingLeft = w.color ? '0.4rem' : '';
     const top = el('div', 'flex items-center gap-2');
     const ic = el('span', ''); ic.style.color = w.color || cssVar('--faint'); ic.innerHTML = svg('branch', 'icon icon-sm'); top.appendChild(ic);
-    const name = el('span', 'truncate text-sm ' + (sel ? 'text-app font-medium' : 'text-muted'), w.name);
+    const name = el('span', 'truncate text-sm ' + (sel ? 'text-app font-medium' : 'text-muted'), w.displayName || w.name);
+    if (w.displayName) name.title = `${w.name} · ${w.branch || ''}`;
     top.appendChild(name);
     top.appendChild(gitBadge(w));
-    // hover actions: color · edit · delete
+    // hover actions: color · rename · open-in-editor · delete
     const actions = el('span', 'ml-1 flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100');
     const colorBtn = el('button', 'iconbtn px-1'); colorBtn.title = 'Color';
     colorBtn.innerHTML = `<span class="inline-block h-3 w-3 rounded-full" style="background:${w.color || 'transparent'};box-shadow:inset 0 0 0 1px var(--border)"></span>`;
     colorBtn.onclick = (ev) => { ev.stopPropagation(); openColorPicker(w, colorBtn); };
     actions.appendChild(colorBtn);
+    const ren = el('button', 'iconbtn px-1'); ren.title = 'Rename'; ren.innerHTML = svg('pencil', 'icon icon-sm');
+    ren.onclick = (ev) => { ev.stopPropagation(); renameWorktree(w); };
+    actions.appendChild(ren);
     if (state.info && state.info.editor) {
-      const edit = el('button', 'iconbtn px-1'); edit.title = 'Open in code-server'; edit.innerHTML = svg('pencil', 'icon icon-sm');
+      const edit = el('button', 'iconbtn px-1'); edit.title = 'Open in code-server'; edit.innerHTML = svg('external', 'icon icon-sm');
       edit.onclick = (ev) => { ev.stopPropagation(); window.open('/edit/?folder=' + encodeURIComponent(w.path), '_blank'); };
       actions.appendChild(edit);
     }
@@ -301,7 +318,7 @@ function renderContext() {
   box.innerHTML = '';
   if (!w) { box.appendChild(el('span', 'text-muted', 'Select a worktree')); return; }
   const ic = el('span', 'text-accent'); ic.innerHTML = svg('branch', 'icon icon-sm'); box.appendChild(ic);
-  box.appendChild(el('span', 'font-semibold text-app', w.name));
+  box.appendChild(el('span', 'font-semibold text-app', w.displayName || w.name));
   box.appendChild(el('span', 'text-faint', '·'));
   box.appendChild(el('span', 'truncate text-muted', w.detached ? 'detached' : (w.branch || '')));
 }
@@ -508,13 +525,29 @@ function flashTitle(msg) {
 // ---- new worktree dialog (minimal) ---------------------------------------
 
 async function newWorktree() {
-  const branch = await promptModal('New worktree', { name: 'branch', label: 'Branch name (created off current HEAD)', placeholder: 'feature/my-thing' }, 'Create');
-  if (!branch) return;
+  let branches = [];
+  try { branches = (await api('GET', '/api/branches')) || []; } catch (_) {}
+  const res = await modal({
+    title: 'New worktree',
+    bodyHTML: '<div class="text-muted">Type a new branch name to create it (off HEAD), or pick an existing branch to check it out.</div>',
+    fields: [{ name: 'branch', label: 'Branch', placeholder: 'feature/my-thing', datalist: branches }],
+    actions: [{ label: 'Cancel', value: null }, { label: 'Create', primary: true }],
+  });
+  if (!res || !res.branch) return;
+  const branch = res.branch;
+  const newBranch = !branches.includes(branch);
   try {
-    await api('POST', '/api/worktrees', { name: branch, branch, newBranch: true });
+    await api('POST', '/api/worktrees', { name: branch, branch, newBranch });
     await loadWorktrees();
-    toast(`Created worktree ${branch}`, 'ok');
+    toast(`${newBranch ? 'Created' : 'Checked out'} worktree ${branch}`, 'ok');
   } catch (e) { toast(e.message); }
+}
+
+async function renameWorktree(w) {
+  const name = await promptModal('Rename worktree', { name: 'name', label: 'Display name (independent of branch)', placeholder: w.branch || w.name, value: w.displayName || '' }, 'Rename');
+  if (name === null) return;
+  try { await api('POST', '/api/worktrees/rename', { path: w.path, name }); w.displayName = name; renderWorktrees(); renderContext(); }
+  catch (e) { toast(e.message); }
 }
 
 function openColorPicker(w, anchor) {
@@ -592,6 +625,8 @@ function wire() {
   applyTheme(currentTheme());
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (currentTheme() === 'system') applyTheme('system'); });
   window.addEventListener('resize', () => { const t = state.terms[state.active]; if (t) fit(t); });
+  // Reflect branch/worktree changes made outside the UI when you return to it.
+  window.addEventListener('focus', () => { loadWorktrees().catch(() => {}); loadSessions().catch(() => {}); loadPorts().catch(() => {}); });
 }
 
 // ---- passkey auth ---------------------------------------------------------
