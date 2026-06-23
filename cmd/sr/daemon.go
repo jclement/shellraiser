@@ -116,6 +116,7 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 	}
 	co := newCoordinator(port, am)
 	co.pm = newPortMapper(signer, tl)
+	co.ports = newPortStore(dir)
 	co.reg.reconcile() // re-adopt any workers from a previous run
 	if ts != nil {
 		go serveTailnetUI(co, ts)

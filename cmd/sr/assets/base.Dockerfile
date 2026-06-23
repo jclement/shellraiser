@@ -37,6 +37,13 @@ RUN arch="$(dpkg --print-architecture)" \
     && mv "/tmp/pgweb_linux_${arch}" /usr/local/bin/pgweb \
     && chmod +x /usr/local/bin/pgweb && rm /tmp/pgweb.zip
 
+# lazygit — terminal UI for git diffing/staging.
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in amd64) la=x86_64 ;; arm64) la=arm64 ;; *) la="$arch" ;; esac \
+    && ver="$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest | grep -oP '"tag_name":\s*"v\K[^"]+')" \
+    && curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${ver}/lazygit_${ver}_Linux_${la}.tar.gz" -o /tmp/lg.tgz \
+    && tar -xzf /tmp/lg.tgz -C /usr/local/bin lazygit && rm /tmp/lg.tgz
+
 # Tailscale static binaries (used only if a worker opts into in-container TS).
 RUN arch="$(dpkg --print-architecture)" \
     && ver="$(curl -fsSL https://pkgs.tailscale.com/stable/ | grep -oE "tailscale_[0-9.]+_${arch}\.tgz" | head -1 | sed -E 's/tailscale_([0-9.]+)_.*/\1/')" \

@@ -252,6 +252,7 @@ const BUILTIN_LAUNCH = [
   { kind: 'shell', icon: 'terminal', label: 'shell' },
   { kind: 'editor', icon: 'pencil', label: 'editor' },          // helix/$EDITOR
   { kind: 'editor', icon: 'pencil', label: 'fresh', args: ['fresh'], title: 'fresh' },
+  { kind: 'shell', icon: 'branch', label: 'lazygit', args: ['lazygit'], title: 'lazygit' },
 ];
 
 async function loadCommands() {

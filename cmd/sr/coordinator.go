@@ -29,6 +29,7 @@ type Coordinator struct {
 	auth    *auth.Manager
 	act     *activity
 	pm      *PortMapper
+	ports   *portStore
 	mu      sync.Mutex
 	proxies map[string]*httputil.ReverseProxy // id@port → cached reverse proxy
 }
@@ -331,9 +332,11 @@ func (c *Coordinator) handlePortMap(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
+		c.ports.set(id, port, hostPort) // remember it across restarts
 		writeJSON(w, map[string]any{"container": port, "host": hostPort, "addr": "127.0.0.1:" + strconv.Itoa(hostPort)})
 	case "unmap":
 		c.pm.Unmap(id, port)
+		c.ports.del(id, port)
 		writeJSON(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
@@ -350,11 +353,17 @@ func (c *Coordinator) handlePortList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// autoMap forwards the project's declared .shellraiser.toml `ports` on registration.
+// autoMap forwards the project's declared .shellraiser.toml `ports` plus any
+// previously-remembered mappings on registration.
 func (c *Coordinator) autoMap(w *Worker) {
 	for _, p := range declaredPorts(w.Project) {
 		if _, err := c.pm.Map(w, p, 0); err != nil {
 			ui.Warn("ports", "auto-map %s :%d: %v", w.ID, p, err)
+		}
+	}
+	for container, host := range c.ports.get(w.ID) {
+		if _, err := c.pm.Map(w, container, host); err != nil {
+			ui.Warn("ports", "re-map %s :%d→:%d: %v", w.ID, container, host, err)
 		}
 	}
 }
