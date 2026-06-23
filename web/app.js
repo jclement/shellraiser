@@ -951,25 +951,6 @@ function flashTitle(msg) {
 
 // ---- new worktree dialog (minimal) ---------------------------------------
 
-async function newWorktree() {
-  let branches = [];
-  try { branches = (await api('GET', '/api/branches')) || []; } catch (_) {}
-  const res = await modal({
-    title: 'New worktree',
-    bodyHTML: '<div class="text-muted">Type a new branch name to create it (off HEAD), or pick an existing branch to check it out.</div>',
-    fields: [{ name: 'branch', label: 'Branch', placeholder: 'feature/my-thing', datalist: branches }],
-    actions: [{ label: 'Cancel', value: null }, { label: 'Create', primary: true }],
-  });
-  if (!res || !res.branch) return;
-  const branch = res.branch;
-  const newBranch = !branches.includes(branch);
-  try {
-    await api('POST', '/api/worktrees', { name: branch, branch, newBranch });
-    await loadWorktrees();
-    toast(`${newBranch ? 'Created' : 'Checked out'} worktree ${branch}`, 'ok');
-  } catch (e) { toast(e.message); }
-}
-
 // newBranchAgent: one-step "new branch + kick off an agent" — pick/enter a
 // branch, write a starting prompt, choose an available agent, and it creates the
 // worktree, switches to it, and launches the agent already working on the prompt.
@@ -1090,7 +1071,7 @@ function applyTheme(t) {
 function setTheme(t) { localStorage.setItem('shellraiser-theme', t); applyTheme(t); }
 
 function wire() {
-  $('#new-worktree').onclick = newWorktree;
+  $('#new-worktree').onclick = newBranchAgent;
   $('#menu-btn').onclick = () => ($('#sidebar').classList.contains('-translate-x-full') ? openSidebar() : closeSidebar());
   $('#backdrop').onclick = closeSidebar;
   $('#add-tab').onclick = (e) => { e.stopPropagation(); $('#launch-menu').classList.toggle('hidden'); };
