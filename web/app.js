@@ -55,6 +55,7 @@ const state = {
 window.__shellraiser = state; // exposed for automated tests
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // The coordinator serves one UI for many projects. When the shell is mounted
 // under /w/<id>/, every WORKER call (api/ws/ports/db/edit/p) is prefixed with
@@ -1080,8 +1081,108 @@ async function openAbout() {
   await modal({ title: 'About', bodyHTML: body, actions: [{ label: 'Close', value: null }] });
 }
 
+// ---- command palette (⌘K / Ctrl-K) ---------------------------------------
+
+const palette = { items: [], shown: [], idx: 0, xproj: [] };
+
+function paletteOpen() { return !$('#palette').classList.contains('hidden'); }
+
+async function openPalette() {
+  if (paletteOpen()) { closePalette(); return; }
+  $('#palette').classList.remove('hidden'); $('#palette').classList.add('flex');
+  const inp = $('#palette-input'); inp.value = '';
+  buildPaletteItems(); renderPaletteList('');
+  setTimeout(() => inp.focus(), 0);
+  // Pull in tabs from OTHER running projects in the background, then merge.
+  fetchCrossProjectTabs().then(() => { if (paletteOpen()) { buildPaletteItems(); renderPaletteList(inp.value); } });
+}
+
+function closePalette() {
+  $('#palette').classList.add('hidden'); $('#palette').classList.remove('flex');
+  if (state.active) focusActiveTerm();
+}
+
+function wtNameFor(path) { const w = state.worktrees.find((x) => x.path === path); return w ? (w.displayName || w.name) : path; }
+
+function buildPaletteItems() {
+  const items = [];
+  const target = state.selected || (state.worktrees[0] && state.worktrees[0].path);
+  if (target) {
+    for (const b of BUILTIN_LAUNCH) items.push({ icon: b.icon, label: `New ${b.label}`, hint: 'session · ' + wtNameFor(target), run: () => { state.selected = target; launch(b.kind, b.args, b.title); } });
+    for (const c of state.commands) items.push({ icon: 'play', label: `Run ${c.name}`, hint: 'command', run: () => { state.selected = target; launchCommand(c.name); } });
+  }
+  for (const s of state.sessions) items.push({ icon: KIND[s.kind] || 'play', label: s.title, hint: 'tab · ' + wtNameFor(s.cwd), run: () => { selectWorktree(s.cwd); setActive(s.id); } });
+  for (const w of state.worktrees) items.push({ icon: 'branch', label: w.displayName || w.name, hint: 'worktree' + (w.branch ? ' · ' + w.branch : ''), run: () => selectWorktree(w.path) });
+  for (const x of palette.xproj) items.push({ icon: KIND[x.kind] || 'play', label: x.title, hint: 'tab · ' + x.project, run: () => { location.href = '/w/' + x.id + '/#s=' + x.session; } });
+  for (const pr of state.projects) if (pr.id !== state.projectId) items.push({ icon: 'box', label: pr.name, hint: 'project', run: () => { location.href = '/w/' + pr.id + '/'; } });
+  palette.items = items;
+}
+
+async function fetchCrossProjectTabs() {
+  palette.xproj = [];
+  const others = state.projects.filter((p) => p.id !== state.projectId && p.state === 'running');
+  await Promise.all(others.map(async (p) => {
+    try {
+      const ss = await capi('GET', `/w/${p.id}/api/sessions`);
+      for (const s of ss || []) palette.xproj.push({ id: p.id, project: p.name, session: s.id, title: s.title, kind: s.kind });
+    } catch (_) {}
+  }));
+}
+
+function renderPaletteList(query) {
+  const q = query.toLowerCase().trim();
+  const list = $('#palette-list');
+  palette.shown = palette.items.filter((it) => !q || (it.label + ' ' + it.hint).toLowerCase().includes(q));
+  palette.idx = 0;
+  list.innerHTML = '';
+  if (!palette.shown.length) { list.appendChild(el('div', 'px-4 py-3 text-sm text-faint', 'No matches')); return; }
+  palette.shown.forEach((it, i) => {
+    const row = el('div', 'flex cursor-pointer items-center gap-3 px-4 py-2 text-sm');
+    row.innerHTML = svg(it.icon, 'icon icon-sm') + `<span class="truncate text-app">${esc(it.label)}</span><span class="ml-auto shrink-0 truncate pl-3 text-[11px] text-faint">${esc(it.hint)}</span>`;
+    row.onmousemove = () => { if (palette.idx !== i) { palette.idx = i; highlightPalette(); } };
+    row.onclick = () => runPalette(i);
+    list.appendChild(row);
+  });
+  highlightPalette();
+}
+
+function highlightPalette() {
+  const list = $('#palette-list');
+  [...list.children].forEach((c, i) => c.classList.toggle('row-sel', i === palette.idx));
+  const sel = list.children[palette.idx];
+  if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest' });
+}
+
+function runPalette(i) { const it = palette.shown[i]; if (!it) return; closePalette(); it.run(); }
+
+function wirePalette() {
+  const inp = $('#palette-input');
+  inp.oninput = () => renderPaletteList(inp.value);
+  inp.onkeydown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); palette.idx = Math.min(palette.idx + 1, palette.shown.length - 1); highlightPalette(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); palette.idx = Math.max(palette.idx - 1, 0); highlightPalette(); }
+    else if (e.key === 'Enter') { e.preventDefault(); runPalette(palette.idx); }
+    else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+  };
+  $('#palette').onclick = (e) => { if (e.target === $('#palette')) closePalette(); };
+  // Global ⌘K / Ctrl-K — capture phase so it fires even when a terminal is focused.
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); e.stopPropagation(); openPalette(); }
+  }, true);
+}
+
+// Deep-link from a cross-project palette jump: /w/<id>/#s=<sessionId>.
+function openDeepLinkedSession() {
+  const m = location.hash.match(/[#&]s=([a-f0-9]+)/);
+  if (!m) return;
+  const s = state.sessions.find((x) => x.id === m[1]);
+  history.replaceState(null, '', location.pathname);
+  if (s) { selectWorktree(s.cwd); setActive(s.id); }
+}
+
 async function initApp(authEnabled) {
   wire();
+  wirePalette();
   $('#about-btn').onclick = openAbout;
   if (authEnabled) {
     $('#settings-btn').classList.remove('hidden');
@@ -1107,6 +1208,7 @@ async function initApp(authEnabled) {
   await loadCommands();
   await loadWorktrees();
   await loadSessions();
+  openDeepLinkedSession(); // jump to a tab linked from a cross-project palette hit
   await loadPorts();
   connectEvents();
   setInterval(loadPorts, 5000);

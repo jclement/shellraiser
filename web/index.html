@@ -193,6 +193,16 @@
 
   <button id="kb-fab" data-icon="key" title="Keyboard"></button>
   <div id="modal-root" class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/50 p-4"></div>
+
+  <!-- Command palette (⌘K / Ctrl-K) -->
+  <div id="palette" class="fixed inset-0 z-[70] hidden items-start justify-center bg-black/50 p-4 pt-[12vh]">
+    <div class="flex max-h-[70vh] w-[34rem] max-w-full flex-col overflow-hidden rounded-lg border border-app bg-panel shadow-2xl">
+      <input id="palette-input" placeholder="Jump to a tab, worktree, project — or start a session…" autocomplete="off" spellcheck="false"
+        class="w-full border-b border-app bg-panel px-4 py-3 text-sm text-app outline-none" />
+      <div id="palette-list" class="flex-1 overflow-y-auto py-1"></div>
+    </div>
+  </div>
+
   <div id="toast" class="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
   <script src="/app.js"></script>
 </body>

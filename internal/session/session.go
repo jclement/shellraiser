@@ -37,9 +37,10 @@ const (
 )
 
 const (
-	activeWindow  = 1 * time.Second // output newer than this ⇒ "running"
-	minRunForDing = 2 * time.Second // ignore brief blips when deciding to ding
-	ringBytes     = 256 * 1024      // scrollback replayed on (re)attach
+	activeWindow  = 1 * time.Second        // output newer than this ⇒ "running"
+	minRunForDing = 2 * time.Second        // ignore brief blips when deciding to ding
+	resizeQuiet   = 700 * time.Millisecond // post-resize redraw burst isn't "activity"
+	ringBytes     = 256 * 1024             // scrollback replayed on (re)attach
 )
 
 // Event is emitted on every state transition and broadcast to UI listeners.
@@ -85,12 +86,13 @@ type Session struct {
 	ptmx *os.File
 	ring *ringBuffer
 
-	mu           sync.Mutex
-	subs         map[*subscriber]struct{}
-	lastOutput   time.Time
-	runningSince time.Time
-	state        State
-	exitCode     int
+	mu            sync.Mutex
+	subs          map[*subscriber]struct{}
+	lastOutput    time.Time
+	runningSince  time.Time
+	suppressUntil time.Time // output before this isn't counted as activity (post-resize)
+	state         State
+	exitCode      int
 }
 
 func (s *Session) Info() Info {
@@ -145,6 +147,10 @@ func (s *Session) Write(p []byte) {
 func (s *Session) Resize(cols, rows uint16) {
 	s.mu.Lock()
 	ptmx := s.ptmx
+	// A resize (e.g. switching to this tab/worktree) makes TUI apps like claude
+	// repaint the whole screen — a burst of output that is NOT real work. Ignore
+	// output as "activity" for a short window so the busy indicator doesn't flip.
+	s.suppressUntil = time.Now().Add(resizeQuiet)
 	s.mu.Unlock()
 	if ptmx != nil {
 		_ = pty.Setsize(ptmx, &pty.Winsize{Cols: cols, Rows: rows})
@@ -160,7 +166,11 @@ func (s *Session) readLoop() {
 			copy(chunk, buf[:n])
 			s.ring.write(chunk)
 			s.mu.Lock()
-			s.lastOutput = time.Now()
+			// Count output as "activity" only outside the post-resize quiet window,
+			// so a repaint from switching tabs doesn't read as the agent working.
+			if now := time.Now(); now.After(s.suppressUntil) {
+				s.lastOutput = now
+			}
 			for sub := range s.subs {
 				select {
 				case sub.ch <- chunk:
