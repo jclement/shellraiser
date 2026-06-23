@@ -36,7 +36,8 @@ func (m *Manager) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	// Registering a passkey on a host requires the bootstrap code, unless the
 	// caller already holds a valid session (adding an additional passkey).
 	// Bad-code attempts are rate-limited to blunt brute force.
-	if !m.Authenticated(r) {
+	authed := m.Authenticated(r)
+	if !authed {
 		if m.bootstrapLocked() {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many attempts — wait a few minutes"})
 			return
@@ -63,7 +64,7 @@ func (m *Manager) handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	if label == "" {
 		label = "passkey"
 	}
-	m.putCeremony(w, r, &ceremony{session: *session, rpID: m.rp(r), label: label})
+	m.putCeremony(w, r, &ceremony{session: *session, rpID: m.rp(r), label: label, bootstrap: !authed})
 	writeJSON(w, http.StatusOK, options)
 }
 
@@ -90,6 +91,9 @@ func (m *Manager) handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	})
 	_ = m.save()
 	m.mu.Unlock()
+	if cer.bootstrap {
+		m.rotateBootstrap()
+	}
 	m.mintSession(w, r)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

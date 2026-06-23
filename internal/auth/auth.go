@@ -45,18 +45,20 @@ type store struct {
 }
 
 type ceremony struct {
-	session webauthn.SessionData
-	rpID    string
-	label   string
-	expires time.Time
+	session   webauthn.SessionData
+	rpID      string
+	label     string
+	bootstrap bool // gated by the bootstrap code (vs. an existing session)
+	expires   time.Time
 }
 
 // Manager holds auth state and serves the /api/auth/* endpoints.
 type Manager struct {
 	path       string
 	noAuth     bool
-	token      string // optional SLOPBOX_TOKEN fallback for automation
-	rpOverride string // pinned RP ID (else discovered from Host)
+	token      string                        // optional SLOPBOX_TOKEN fallback for automation
+	rpOverride string                        // pinned RP ID (else discovered from Host)
+	Logf       func(format string, a ...any) // optional; for logging bootstrap rotation
 
 	mu           sync.Mutex
 	data         store
@@ -116,6 +118,19 @@ func New(path, token, rpOverride string, noAuth bool) (*Manager, error) {
 // BootstrapCode returns the code that authorizes registering a new passkey.
 func (m *Manager) BootstrapCode() string { return m.data.Bootstrap }
 
+// rotateBootstrap issues a fresh bootstrap code after one is used, so a code
+// leaked via the logs can't be reused to enroll more passkeys.
+func (m *Manager) rotateBootstrap() {
+	m.mu.Lock()
+	m.data.Bootstrap = randomCode()
+	code := m.data.Bootstrap
+	_ = m.save()
+	m.mu.Unlock()
+	if m.Logf != nil {
+		m.Logf("bootstrap code used — new code: %s", code)
+	}
+}
+
 // Enabled reports whether auth is enforced.
 func (m *Manager) Enabled() bool { return !m.noAuth }
 
@@ -132,11 +147,11 @@ func (m *Manager) Authenticated(r *http.Request) bool {
 	if c, err := r.Cookie(sessionCookie); err == nil && m.validSession(c.Value) {
 		return true
 	}
+	// Token fallback for automation — header only. We intentionally do NOT accept
+	// it as a ?t= query param: that leaks the credential into access logs,
+	// Referer headers, and browser history.
 	if m.token != "" {
 		if t := r.Header.Get("X-Slopbox-Token"); t != "" && ctEq(t, m.token) {
-			return true
-		}
-		if t := r.URL.Query().Get("t"); t != "" && ctEq(t, m.token) {
 			return true
 		}
 	}

@@ -47,6 +47,7 @@ const state = {
   ports: [],             // [{port,process,worktree,sessionId}]
   terms: {},             // id -> { term, fit, ws, host }
   audio: null,
+  ctrlSticky: false,     // mobile key-bar Ctrl modifier armed for next key
 };
 
 window.__slopbox = state; // exposed for automated tests
@@ -195,6 +196,7 @@ async function loadWorktrees() {
 
 async function loadSessions() {
   state.sessions = await api('GET', '/api/sessions');
+  reconcileTerms();
   if (state.selected) syncTabs();
   renderWorktrees();
   renderTabs();
@@ -397,6 +399,7 @@ function setActive(id) {
   $('#empty-state').style.display = id ? 'none' : 'flex';
   const t = state.terms[id];
   if (t) { requestAnimationFrame(() => { fit(t); t.term.focus(); }); }
+  updateMobileChrome();
   renderTabs();
 }
 
@@ -422,7 +425,7 @@ function ensureTerm(s) {
   const term = new Terminal({
     cursorBlink: true,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    fontSize: 13,
+    fontSize: isMobile() ? 14 : 13,
     theme: {
       background: cssVar('--term-bg') || '#0a0a0b',
       foreground: cssVar('--term-fg') || '#e4e4e7',
@@ -436,15 +439,78 @@ function ensureTerm(s) {
   try { term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch (_) {}
   term.open(host);
 
-  const rec = { term, fit: fitAddon, ws: null, host, cwd: s.cwd };
+  const overlay = el('div', 'term-reconnecting hidden', 'reconnecting…');
+  host.appendChild(overlay);
+
+  const rec = { term, fit: fitAddon, ws: null, host, overlay, cwd: s.cwd, closed: false, retries: 0, retryTimer: null };
   state.terms[s.id] = rec;
   fit(rec);
   connectWS(s.id);
 
-  term.onData((d) => { if (rec.ws && rec.ws.readyState === 1) rec.ws.send(JSON.stringify({ type: 'data', data: d })); });
+  term.onData((d) => sendData(rec, applyCtrl(d)));
   term.onResize(({ cols, rows }) => { if (rec.ws && rec.ws.readyState === 1) rec.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
+  // Tap the terminal to (re)focus the hidden textarea → pops the soft keyboard.
+  host.addEventListener('pointerup', () => { if (state.terms[state.active] === rec) focusActiveTerm(); });
 }
 
+// ---- mobile keyboard ------------------------------------------------------
+
+function sendData(rec, data) {
+  if (rec && rec.ws && rec.ws.readyState === 1) rec.ws.send(JSON.stringify({ type: 'data', data }));
+}
+function applyCtrl(d) {
+  if (state.ctrlSticky && d.length === 1) {
+    const code = d.toUpperCase().charCodeAt(0);
+    if (code >= 64 && code <= 95) d = String.fromCharCode(code & 0x1f); // Ctrl-<char>
+    setCtrlSticky(false);
+  }
+  return d;
+}
+function setCtrlSticky(on) {
+  state.ctrlSticky = on;
+  const btn = document.querySelector('.kbkey[data-k="ctrl"]');
+  if (btn) btn.classList.toggle('sticky-on', on);
+}
+// Focus the active terminal's hidden textarea inside a user gesture so mobile
+// browsers raise the keyboard (they won't focus the xterm canvas on their own).
+function focusActiveTerm() {
+  const rec = state.terms[state.active];
+  if (!rec) return;
+  const ta = rec.host.querySelector('.xterm-helper-textarea');
+  if (ta) { try { ta.focus({ preventScroll: true }); } catch (_) { ta.focus(); } }
+  rec.term.focus();
+}
+const KEYBAR = [
+  { l: 'esc', d: '\x1b' }, { l: 'tab', d: '\t' }, { l: 'ctrl', k: 'ctrl' },
+  { l: '←', d: '\x1b[D' }, { l: '↓', d: '\x1b[B' }, { l: '↑', d: '\x1b[A' }, { l: '→', d: '\x1b[C' },
+  { l: '|', d: '|' }, { l: '~', d: '~' }, { l: '/', d: '/' }, { l: '-', d: '-' }, { l: '⇞', d: '\x1b[5~' }, { l: '⇟', d: '\x1b[6~' },
+];
+function buildKeyBar() {
+  const bar = $('#keybar'); bar.innerHTML = '';
+  for (const key of KEYBAR) {
+    const b = el('button', 'kbkey', key.l);
+    if (key.k) b.dataset.k = key.k;
+    // pointerdown + preventDefault so tapping a key never blurs the textarea.
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (key.k === 'ctrl') { setCtrlSticky(!state.ctrlSticky); return; }
+      const rec = state.terms[state.active];
+      if (rec) sendData(rec, applyCtrl(key.d));
+      focusActiveTerm();
+    });
+    bar.appendChild(b);
+  }
+}
+function updateMobileChrome() {
+  const show = !!(isMobile() && state.active && state.terms[state.active]);
+  $('#keybar').classList.toggle('on', show);
+  $('#kb-fab').classList.toggle('on', show);
+}
+
+// connectWS opens the terminal socket and reconnects with exponential backoff
+// after any drop (sleep/wake, mobile handoff, proxy idle-timeout, server blip).
+// The server replays scrollback on every attach, so we reset() before a
+// reconnect's replay to avoid duplicated history.
 function connectWS(id) {
   const rec = state.terms[id];
   if (!rec) return;
@@ -456,8 +522,45 @@ function connectWS(id) {
     if (typeof ev.data === 'string') rec.term.write(ev.data);
     else rec.term.write(new Uint8Array(ev.data));
   };
-  ws.onopen = () => { const { cols, rows } = rec.term; ws.send(JSON.stringify({ type: 'resize', cols, rows })); };
-  ws.onclose = () => { rec.ws = null; };
+  ws.onopen = () => {
+    rec.overlay.classList.add('hidden');
+    if (rec.retries > 0) rec.term.reset(); // clear before the replayed snapshot
+    rec.retries = 0;
+    const { cols, rows } = rec.term;
+    ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+  };
+  ws.onerror = () => {};
+  ws.onclose = () => {
+    rec.ws = null;
+    if (rec.closed) return;
+    const s = state.sessions.find((x) => x.id === id);
+    if (!s || s.state === 'exited') return; // session gone/finished — don't retry
+    rec.overlay.classList.remove('hidden');
+    const delay = Math.min(15000, 500 * Math.pow(1.6, rec.retries++)) + Math.random() * 300;
+    rec.retryTimer = setTimeout(() => connectWS(id), delay);
+  };
+}
+
+function disposeTerm(id) {
+  const rec = state.terms[id];
+  if (!rec) return;
+  rec.closed = true;
+  clearTimeout(rec.retryTimer);
+  if (rec.ws) rec.ws.close();
+  rec.term.dispose();
+  rec.host.remove();
+  delete state.terms[id];
+}
+
+// reconcileTerms disposes terminals whose session vanished server-side (worktree
+// deleted via CLI, external kill, reap) — otherwise they leak ws/xterm/DOM.
+function reconcileTerms() {
+  for (const id of Object.keys(state.terms)) {
+    if (!state.sessions.find((s) => s.id === id)) {
+      disposeTerm(id);
+      if (state.active === id) state.active = null;
+    }
+  }
 }
 
 function fit(rec) {
@@ -466,8 +569,7 @@ function fit(rec) {
 
 async function killSession(id) {
   try { await api('DELETE', `/api/sessions/${id}`); } catch (e) { /* may already be gone */ }
-  const rec = state.terms[id];
-  if (rec) { if (rec.ws) rec.ws.close(); rec.term.dispose(); rec.host.remove(); delete state.terms[id]; }
+  disposeTerm(id);
   await loadSessions();
   syncTabs();
   if (state.active === id) {
@@ -624,7 +726,11 @@ function wire() {
   document.querySelectorAll('[data-theme]').forEach((b) => { b.onclick = () => setTheme(b.dataset.theme); });
   applyTheme(currentTheme());
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (currentTheme() === 'system') applyTheme('system'); });
-  window.addEventListener('resize', () => { const t = state.terms[state.active]; if (t) fit(t); });
+  // Mobile keyboard chrome.
+  buildKeyBar();
+  $('#kb-fab').onclick = () => focusActiveTerm();
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { const t = state.terms[state.active]; if (t) fit(t); });
+  window.addEventListener('resize', () => { const t = state.terms[state.active]; if (t) fit(t); updateMobileChrome(); });
   // Reflect branch/worktree changes made outside the UI when you return to it.
   window.addEventListener('focus', () => { loadWorktrees().catch(() => {}); loadSessions().catch(() => {}); loadPorts().catch(() => {}); });
 }

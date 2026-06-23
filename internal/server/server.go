@@ -82,6 +82,7 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: %w", err)
 	}
+	am.Logf = func(format string, a ...any) { ui.Info("auth", format, a...) }
 	// Repo display name: config override → git remote → mount-path basename.
 	repoName := cfg.Name
 	if repoName == "" {
@@ -332,11 +333,25 @@ func (s *Server) handleRemoveWorktree(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	// Defense in depth: only remove worktrees that live under the worktrees dir.
+	if !underDir(filepath.Clean(req.Path), s.worktreesDir) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("worktree path must be under %s", s.worktreesDir))
+		return
+	}
 	if err := worktree.Remove(s.repoDir, req.Path, req.Force); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// underDir reports whether path is dir or strictly inside it.
+func underDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -445,19 +460,49 @@ func (s *Server) handleTermWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	_ = conn.WriteMessage(websocket.BinaryMessage, sess.Snapshot())
+	// Keepalive: a peer that vanishes without a TCP FIN (sleep, mobile handoff,
+	// dead proxy) is detected via missed pongs, so the read loop unblocks, the
+	// subscriber is cancelled, and no goroutine/subscriber leaks.
+	const (
+		writeWait  = 10 * time.Second
+		pongWait   = 60 * time.Second
+		pingPeriod = 50 * time.Second
+	)
+	conn.SetReadLimit(1 << 20)
+	_ = conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(pongWait)) })
 
 	out, cancel := sess.Subscribe()
 	defer cancel()
 
 	go func() {
-		for data := range out {
-			if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-				conn.Close()
-				return
+		ping := time.NewTicker(pingPeriod)
+		defer ping.Stop()
+		_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+		if conn.WriteMessage(websocket.BinaryMessage, sess.Snapshot()) != nil {
+			conn.Close()
+			return
+		}
+		for {
+			select {
+			case data, ok := <-out:
+				if !ok {
+					conn.Close()
+					return
+				}
+				_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+				if conn.WriteMessage(websocket.BinaryMessage, data) != nil {
+					conn.Close()
+					return
+				}
+			case <-ping.C:
+				_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+				if conn.WriteMessage(websocket.PingMessage, nil) != nil {
+					conn.Close()
+					return
+				}
 			}
 		}
-		conn.Close()
 	}()
 
 	for {
