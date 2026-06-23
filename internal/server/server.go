@@ -201,6 +201,18 @@ func (s *Server) Run() error {
 // Shutdown kills every session (used when a bare-metal worker is removed).
 func (s *Server) Shutdown() { s.mgr.KillAll() }
 
+// SessionStats returns this worker's total and running session counts (used by
+// the coordinator's aggregate stats for a bare-metal worker).
+func (s *Server) SessionStats() (total, running int) {
+	for _, i := range s.mgr.List() {
+		total++
+		if i.State == session.StateRunning {
+			running++
+		}
+	}
+	return
+}
+
 // gate enforces auth on data/proxy routes while leaving the static UI and the
 // /api/auth/* endpoints public (the SPA gates itself via /api/auth/status).
 //

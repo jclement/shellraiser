@@ -172,6 +172,60 @@ func (c *Coordinator) handleAPIWorkers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// handleStats aggregates live stats across all projects for the About page.
+func (c *Coordinator) handleStats(w http.ResponseWriter, r *http.Request) {
+	c.reg.reconcile()
+	workers := c.reg.list()
+	projRunning, sessTotal, sessRunning := 0, 0, 0
+	for _, wk := range workers {
+		if wk.State != "running" {
+			continue
+		}
+		projRunning++
+		t, run := workerSessions(wk)
+		sessTotal += t
+		sessRunning += run
+	}
+	writeJSON(w, map[string]any{
+		"version":  version,
+		"projects": map[string]int{"total": len(workers), "running": projRunning},
+		"sessions": map[string]int{"total": sessTotal, "running": sessRunning},
+	})
+}
+
+// workerSessions returns a worker's (total, running) session counts.
+func workerSessions(w *Worker) (total, running int) {
+	if w.BareMetal {
+		if w.srv != nil {
+			return w.srv.SessionStats()
+		}
+		return 0, 0
+	}
+	if w.APIPort == "" {
+		return 0, 0
+	}
+	req, _ := http.NewRequest("GET", "http://127.0.0.1:"+w.APIPort+"/api/sessions", nil)
+	if w.Token != "" {
+		req.Header.Set("X-Shellraiser-Worker", w.Token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, 0
+	}
+	defer resp.Body.Close()
+	var ss []struct {
+		State string `json:"state"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&ss)
+	for _, s := range ss {
+		total++
+		if s.State == "running" {
+			running++
+		}
+	}
+	return total, running
+}
+
 // handleWorkerAction performs a lifecycle action on a worker (stop/start/nuke).
 func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request) {
 	id, action := r.PathValue("id"), r.PathValue("action")
@@ -324,6 +378,7 @@ func (c *Coordinator) serveShell(w http.ResponseWriter, r *http.Request) {
 func (c *Coordinator) httpHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/workers", c.handleAPIWorkers)
+	mux.HandleFunc("GET /api/stats", c.handleStats)
 	mux.HandleFunc("GET /api/config", c.handleConfig)
 	mux.HandleFunc("POST /api/config", c.handleConfig)
 	mux.HandleFunc("GET /api/workers/{id}/ports", c.handlePortList)
@@ -400,7 +455,7 @@ func (c *Coordinator) gate(next http.Handler) http.Handler {
 
 func coordPublic(p string) bool {
 	switch p {
-	case "/", "/index.html", "/app.js", "/favicon.ico":
+	case "/", "/index.html", "/app.js", "/favicon.ico", "/logo.png":
 		return true
 	}
 	if strings.HasPrefix(p, "/api/auth/") {

@@ -25,6 +25,7 @@ const ICONS = {
   trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
   external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
 };
 const WT_COLORS = ['', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 function svg(name, cls = 'icon') { return `<svg class="${cls}" viewBox="0 0 24 24">${ICONS[name] || ''}</svg>`; }
@@ -1033,8 +1034,28 @@ async function openSettings() {
   toast('Settings saved (passthrough applies to newly-started workers)', 'ok');
 }
 
+// About dialog: logo + version + live stats across all running projects/sessions.
+async function openAbout() {
+  let s = {};
+  try { s = await capi('GET', '/api/stats'); } catch (_) {}
+  const proj = s.projects || {}, sess = s.sessions || {};
+  const stat = (label, value) => `<div class="text-right text-faint">${label}</div><div class="text-left text-app">${value}</div>`;
+  const body = `
+    <div class="flex flex-col items-center gap-3 text-center">
+      <img src="/logo.png" alt="ShellRaiser" class="h-24 w-auto" />
+      <div class="text-sm text-app">ShellRaiser <span class="text-faint">v${s.version || '?'}</span></div>
+      <div class="grid grid-cols-2 gap-x-5 gap-y-1 text-sm">
+        ${stat('projects', `${proj.running || 0} running · ${proj.total || 0} total`)}
+        ${stat('sessions', `${sess.running || 0} working · ${sess.total || 0} total`)}
+      </div>
+      <div class="text-[11px] text-faint">one coordinator · many sandboxed worktrees</div>
+    </div>`;
+  await modal({ title: 'About', bodyHTML: body, actions: [{ label: 'Close', value: null }] });
+}
+
 async function initApp(authEnabled) {
   wire();
+  $('#about-btn').onclick = openAbout;
   if (authEnabled) {
     $('#settings-btn').classList.remove('hidden');
     $('#settings-btn').onclick = openSettings;
