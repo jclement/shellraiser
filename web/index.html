@@ -48,6 +48,8 @@
     .btn:hover{border-color:var(--accent);color:var(--accent)}
     .btn-primary{background:var(--accent);color:var(--accent-fg);border:1px solid var(--accent)}
     .btn-primary:hover{background:var(--accent2)}
+    .btn-danger{background:var(--red);color:#fff;border:1px solid var(--red)}
+    .btn-danger:hover{filter:brightness(.92)}
     .iconbtn{color:var(--faint);transition:color .15s} .iconbtn:hover{color:var(--accent)}
     .input{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:.375rem;outline:none}
     .input:focus{border-color:var(--accent)}
@@ -75,7 +77,7 @@
       <div id="login-signin" class="hidden border-b border-app px-4 py-4">
         <button id="passkey-login" class="btn btn-primary w-full justify-center px-3 py-2 text-sm font-medium"><span data-icon="key" class="icon-sm"></span> Sign in with passkey</button>
       </div>
-      <div class="px-4 py-4">
+      <div id="login-register" class="px-4 py-4">
         <div class="mb-3 text-[11px] font-semibold uppercase tracking-wider text-faint">Register a passkey</div>
         <label class="block text-[11px] text-muted">Bootstrap code <span class="text-faint">(from the server logs)</span></label>
         <input id="reg-code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" class="input mt-1 w-full px-2.5 py-2 text-sm tracking-wider" />
@@ -136,9 +138,9 @@
         </div>
       </div>
 
-      <div class="relative flex items-stretch border-b border-app bg-panel text-sm">
+      <div class="relative flex min-h-[2.75rem] items-stretch border-b border-app bg-panel text-sm">
         <div id="tabs" class="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto"></div>
-        <button id="add-tab" class="iconbtn shrink-0 border-l border-app px-3" title="New session" data-icon="plus"></button>
+        <button id="add-tab" class="iconbtn flex shrink-0 items-center border-l border-app px-3" title="New session" data-icon="plus"></button>
         <div id="launch-menu" class="absolute right-1 top-full z-40 mt-1 hidden min-w-[11rem] rounded-md border border-app bg-panel py-1 shadow-lg"></div>
       </div>
 
@@ -152,6 +154,7 @@
     </main>
   </div>
 
+  <div id="modal-root" class="fixed inset-0 z-[60] hidden items-center justify-center bg-black/50 p-4"></div>
   <div id="toast" class="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
   <script src="/app.js"></script>
 </body>

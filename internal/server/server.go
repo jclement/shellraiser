@@ -63,6 +63,9 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 	if worktreesDir == "" {
 		worktreesDir = filepath.Join(repoDir, ".worktrees")
 	}
+	// Re-link any worktree folders on disk that lost their git links.
+	worktree.Repair(repoDir, worktreesDir)
+
 	commands := map[string]config.Command{}
 	for _, c := range cfg.Commands {
 		commands[c.Name] = c

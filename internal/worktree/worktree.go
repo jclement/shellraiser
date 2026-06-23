@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -171,6 +172,31 @@ func Remove(repoDir, path string, force bool) error {
 func IsRepo(dir string) bool {
 	_, err := git(dir, "rev-parse", "--is-inside-work-tree")
 	return err == nil
+}
+
+// Repair re-links any git worktrees found as folders under worktreesDir so they
+// show up in List even if their admin files went stale (e.g. the repo path
+// moved between container runs). Best-effort; errors are ignored.
+func Repair(repoDir, worktreesDir string) {
+	entries, err := os.ReadDir(worktreesDir)
+	if err != nil {
+		return
+	}
+	paths := []string{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		p := filepath.Join(worktreesDir, e.Name())
+		// A worktree checkout has a `.git` file (not dir) pointing at the repo.
+		if fi, err := os.Stat(filepath.Join(p, ".git")); err == nil && !fi.IsDir() {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		return
+	}
+	_, _ = git(repoDir, append([]string{"worktree", "repair"}, paths...)...)
 }
 
 func git(dir string, args ...string) ([]byte, error) {

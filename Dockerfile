@@ -6,14 +6,13 @@
 # the image's /home/ubuntu, base-image tools never live in home — dotfiles are
 # seeded from /etc/skel by the entrypoint on first run.
 
-# --- build the Go web app + gatecrash client ------------------------------
+# --- build the Go web app -------------------------------------------------
 FROM golang:1.26 AS app
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/slopbox ./cmd/slopbox \
-    && CGO_ENABLED=0 GOBIN=/out go install github.com/jclement/gatecrash/cmd/gatecrash@latest
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/slopbox ./cmd/slopbox
 
 # --- runtime ---------------------------------------------------------------
 FROM ubuntu:24.04
@@ -56,14 +55,9 @@ RUN arch="$(dpkg --print-architecture)" \
     && mv "/tmp/pgweb_linux_${arch}" /usr/local/bin/pgweb \
     && chmod +x /usr/local/bin/pgweb && rm /tmp/pgweb.zip
 
-# code-server — VS Code in the browser, proxied at /edit (per-worktree editing).
-RUN curl -fsSL https://code-server.dev/install.sh | sh \
-    && rm -rf /root/.cache /root/.npm
-
-# cloudflared — Cloudflare Tunnel (optional, env-gated at runtime).
-RUN arch="$(dpkg --print-architecture)" \
-    && curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}" -o /usr/local/bin/cloudflared \
-    && chmod +x /usr/local/bin/cloudflared
+# code-server (/edit), cloudflared, and the gatecrash client are NOT baked in —
+# they're downloaded into the persistent home (/home/ubuntu/.local) on first use
+# by the entrypoint, so the image stays lean and only pulls what you actually use.
 
 # Static docker CLI — talk to a passed-through host docker socket. No daemon,
 # no docker-in-docker.
@@ -81,11 +75,10 @@ RUN chsh -s /usr/bin/zsh ubuntu \
     && git config --system --add safe.directory '*'
 COPY docker/skel/.zshrc /etc/skel/.zshrc
 
-# gatecrash client (built above), entrypoint, and the slopbox binary.
-COPY --from=app /out/gatecrash /usr/local/bin/gatecrash
+# slopbox binary + entrypoint.
 COPY --from=app /out/slopbox /usr/local/bin/slopbox
 COPY docker/entrypoint.sh /usr/local/bin/slopbox-entrypoint
-RUN chmod +x /usr/local/bin/slopbox-entrypoint /usr/local/bin/gatecrash
+RUN chmod +x /usr/local/bin/slopbox-entrypoint
 
 WORKDIR /work
 EXPOSE 7000

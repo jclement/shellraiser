@@ -11,8 +11,30 @@ USERNAME=ubuntu
 HOME_DIR=/home/ubuntu
 PORT="${SLOPBOX_ADDR:-}"; PORT="${PORT##*:}"; PORT="${PORT:-7000}"
 # Run a command as 'ubuntu' with HOME pointed at the persistent mount (so agent
-# logins, mise installs, etc. land in /home/ubuntu, not /root).
-run_user() { gosu "$USERNAME" env HOME="$HOME_DIR" "$@"; }
+# logins, mise installs, lazy-downloaded tools, etc. land in /home/ubuntu).
+run_user() {
+  gosu "$USERNAME" env HOME="$HOME_DIR" \
+    PATH="$HOME_DIR/.local/bin:$HOME_DIR/.local/share/mise/shims:/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "$@"
+}
+
+# Lazy installers — fetch optional tools into the persistent home on first use
+# so the base image stays lean and only pulls what you actually enable.
+ensure_code_server() {
+  [ -x "$HOME_DIR/.local/bin/code-server" ] && return 0
+  echo "slopbox: installing code-server into the home volume (first run)…"
+  run_user sh -c 'curl -fsSL https://code-server.dev/install.sh | sh -s -- --method standalone --prefix "$HOME/.local"'
+}
+ensure_cloudflared() {
+  [ -x "$HOME_DIR/.local/bin/cloudflared" ] && return 0
+  echo "slopbox: downloading cloudflared…"
+  run_user sh -c "mkdir -p \$HOME/.local/bin && curl -fsSL 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture)' -o \$HOME/.local/bin/cloudflared && chmod +x \$HOME/.local/bin/cloudflared"
+}
+ensure_gatecrash() {
+  [ -x "$HOME_DIR/.local/bin/gatecrash" ] && return 0
+  echo "slopbox: downloading gatecrash client…"
+  run_user sh -c "mkdir -p \$HOME/.local/bin && curl -fsSL 'https://github.com/jclement/gatecrash/releases/latest/download/gatecrash_linux_$(dpkg --print-architecture)' -o \$HOME/.local/bin/gatecrash && chmod +x \$HOME/.local/bin/gatecrash"
+}
 
 # 1. Seed dotfiles into the (possibly empty) persistent home mount.
 if [ ! -f "$HOME_DIR/.zshrc" ] && [ -f /etc/skel/.zshrc ]; then
@@ -79,7 +101,7 @@ if [ -f /work/Brewfile ] && [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
 fi
 
 # 2c. code-server at /edit (default on; SLOPBOX_CODE_SERVER=0 to disable).
-if [ "${SLOPBOX_CODE_SERVER:-1}" != "0" ] && command -v code-server >/dev/null 2>&1; then
+if [ "${SLOPBOX_CODE_SERVER:-1}" != "0" ] && ensure_code_server; then
   CS_DIR="$HOME_DIR/.local/share/code-server"
   mkdir -p "$CS_DIR/extensions" "$CS_DIR/User"
   # Disable the welcome/getting-started tab + telemetry (only seed once).
@@ -108,18 +130,19 @@ if [ -S /var/run/docker.sock ]; then
   usermod -aG "$sock_gid" "$USERNAME" || true
 fi
 
-# 4. Optional external access, selected by which env vars are present.
-if [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ]; then
+# 4. Optional external access, selected by which env vars are present. The
+#    tunnel binary is downloaded into the home volume on first use.
+if [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ] && ensure_cloudflared; then
   echo "slopbox: starting cloudflared tunnel"
-  cloudflared tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
-elif [ -n "${GATECRASH_SERVER:-}" ] && [ -n "${GATECRASH_TOKEN:-}" ]; then
+  run_user cloudflared tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
+elif [ -n "${GATECRASH_SERVER:-}" ] && [ -n "${GATECRASH_TOKEN:-}" ] && ensure_gatecrash; then
   echo "slopbox: starting gatecrash tunnel → $GATECRASH_SERVER"
-  gatecrash --server "$GATECRASH_SERVER" --token "$GATECRASH_TOKEN" \
+  run_user gatecrash --server "$GATECRASH_SERVER" --token "$GATECRASH_TOKEN" \
     ${GATECRASH_HOST_KEY:+--host-key "$GATECRASH_HOST_KEY"} \
     --target "127.0.0.1:${PORT}" &
-elif [ -f /etc/gatecrash/client.toml ]; then
+elif [ -f /etc/gatecrash/client.toml ] && ensure_gatecrash; then
   echo "slopbox: starting gatecrash from /etc/gatecrash/client.toml"
-  gatecrash &
+  run_user gatecrash &
 fi
 
 # 5. Run the app as the unprivileged user, with HOME + tool paths integrated so

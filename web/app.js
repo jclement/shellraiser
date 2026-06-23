@@ -42,7 +42,6 @@ const state = {
   selected: null,        // selected worktree path (launch target)
   sessions: [],          // [{id,title,kind,cwd,state,exitCode,pid}]
   commands: [],          // custom launchers from .slopbox.toml
-  tabs: [],              // open session ids, in tab order
   active: null,          // active tab id
   ports: [],             // [{port,process,worktree,sessionId}]
   terms: {},             // id -> { term, fit, ws, host }
@@ -68,10 +67,68 @@ async function api(method, path, body) {
 }
 
 function toast(msg, kind = 'error') {
-  const bg = kind === 'error' ? 'bg-red-900/90 border-red-600' : 'bg-emerald-900/90 border-emerald-600';
-  const t = el('div', `pointer-events-auto rounded-lg border ${bg} px-3 py-2 text-sm text-white shadow-lg`, msg);
+  const t = el('div', 'pointer-events-auto rounded-md border px-3 py-2 text-sm text-white shadow-lg');
+  t.style.background = kind === 'error' ? 'var(--red)' : 'var(--green)';
+  t.style.borderColor = 'transparent';
+  t.textContent = msg;
   $('#toast').appendChild(t);
   setTimeout(() => t.remove(), 4000);
+}
+
+// ---- modal dialogs (no native confirm/prompt) ----------------------------
+
+function modal({ title, bodyHTML, fields, actions }) {
+  return new Promise((resolve) => {
+    const root = $('#modal-root');
+    root.innerHTML = '';
+    const card = el('div', 'w-[24rem] max-w-full overflow-hidden rounded-lg border border-app bg-panel shadow-2xl');
+    card.appendChild(el('div', 'border-b border-app px-4 py-3 text-sm font-semibold text-app', title));
+    const body = el('div', 'px-4 py-4 text-sm text-muted');
+    if (bodyHTML) body.innerHTML = bodyHTML;
+    const inputs = {};
+    for (const f of fields || []) {
+      body.appendChild(el('label', 'mb-1 mt-3 block text-[11px] text-muted', f.label));
+      const inp = el('input', 'input w-full px-2.5 py-2 text-sm text-app' + (f.mono ? ' tracking-wider' : ''));
+      inp.placeholder = f.placeholder || ''; inp.value = f.value || '';
+      inputs[f.name] = inp; body.appendChild(inp);
+    }
+    card.appendChild(body);
+    const foot = el('div', 'flex justify-end gap-2 border-t border-app px-4 py-3');
+    const done = (val) => { root.classList.add('hidden'); root.classList.remove('flex'); document.removeEventListener('keydown', onKey); resolve(val); };
+    const values = () => Object.fromEntries(Object.entries(inputs).map(([k, v]) => [k, v.value.trim()]));
+    for (const a of actions || []) {
+      const cls = a.primary ? 'btn-primary' : a.danger ? 'btn-danger' : '';
+      const b = el('button', `btn px-3 py-1.5 text-sm ${cls}`, a.label);
+      b.dataset.role = a.primary || a.danger ? 'go' : 'cancel';
+      b.onclick = () => done(a.value !== undefined ? a.value : values());
+      foot.appendChild(b);
+    }
+    card.appendChild(foot);
+    root.appendChild(card);
+    root.classList.remove('hidden'); root.classList.add('flex');
+    root.onclick = (e) => { if (e.target === root) done(null); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') done(null);
+      if (e.key === 'Enter') { const go = foot.querySelector('[data-role="go"]'); if (go) go.click(); }
+    };
+    document.addEventListener('keydown', onKey);
+    const first = Object.values(inputs)[0]; if (first) setTimeout(() => first.focus(), 0);
+  });
+}
+
+async function confirmModal(title, bodyHTML, opts = {}) {
+  const v = await modal({
+    title, bodyHTML, actions: [
+      { label: 'Cancel', value: false },
+      { label: opts.confirmLabel || 'Confirm', primary: !opts.danger, danger: opts.danger, value: true },
+    ],
+  });
+  return v === true;
+}
+
+async function promptModal(title, field, confirmLabel = 'OK') {
+  const v = await modal({ title, fields: [field], actions: [{ label: 'Cancel', value: null }, { label: confirmLabel, primary: true }] });
+  return v ? v[field.name] : null;
 }
 
 // ---- data loading ---------------------------------------------------------
@@ -125,6 +182,7 @@ async function loadWorktrees() {
 
 async function loadSessions() {
   state.sessions = await api('GET', '/api/sessions');
+  if (state.selected) syncTabs();
   renderWorktrees();
   renderTabs();
 }
@@ -308,10 +366,9 @@ async function launchCommand(name) {
 }
 
 function openTab(s) {
-  if (!state.tabs.includes(s.id)) state.tabs.push(s.id);
-  ensureTerm(s);
+  if (state.selected !== s.cwd) { state.selected = s.cwd; renderWorktrees(); renderContext(); renderPorts(); }
+  syncTabs();
   setActive(s.id);
-  renderTabs();
   maybeCloseSidebar();
 }
 
@@ -326,20 +383,18 @@ function setActive(id) {
   renderTabs();
 }
 
-// Tabs/terminals are scoped to the selected worktree.
-function sessionCwd(id) {
-  const t = state.terms[id];
-  if (t && t.cwd) return t.cwd;
-  const s = state.sessions.find((x) => x.id === id);
-  return s ? s.cwd : null;
-}
-function tabsForSelected() { return state.tabs.filter((id) => sessionCwd(id) === state.selected); }
+// Tabs are ALL sessions in the selected worktree — selecting a worktree shows
+// its live sessions without re-clicking them.
+function selectedSessions() { return state.sessions.filter((s) => s.cwd === state.selected); }
+function tabsForSelected() { return selectedSessions().map((s) => s.id); }
+function syncTabs() { for (const s of selectedSessions()) ensureTerm(s); }
 
 function selectWorktree(path) {
   state.selected = path;
   renderWorktrees(); renderContext(); renderPorts();
-  const tabs = tabsForSelected();
-  setActive(tabs.includes(state.active) ? state.active : (tabs[tabs.length - 1] || null));
+  syncTabs();
+  const ids = tabsForSelected();
+  setActive(ids.includes(state.active) ? state.active : (ids[ids.length - 1] || null));
 }
 
 function ensureTerm(s) {
@@ -396,11 +451,11 @@ async function killSession(id) {
   try { await api('DELETE', `/api/sessions/${id}`); } catch (e) { /* may already be gone */ }
   const rec = state.terms[id];
   if (rec) { if (rec.ws) rec.ws.close(); rec.term.dispose(); rec.host.remove(); delete state.terms[id]; }
-  state.tabs = state.tabs.filter((t) => t !== id);
   await loadSessions();
+  syncTabs();
   if (state.active === id) {
-    const tabs = tabsForSelected();
-    setActive(tabs[tabs.length - 1] || null);
+    const ids = tabsForSelected();
+    setActive(ids[ids.length - 1] || null);
   } else { renderTabs(); }
 }
 
@@ -453,7 +508,7 @@ function flashTitle(msg) {
 // ---- new worktree dialog (minimal) ---------------------------------------
 
 async function newWorktree() {
-  const branch = prompt('New worktree — branch name (created off current HEAD):');
+  const branch = await promptModal('New worktree', { name: 'branch', label: 'Branch name (created off current HEAD)', placeholder: 'feature/my-thing' }, 'Create');
   if (!branch) return;
   try {
     await api('POST', '/api/worktrees', { name: branch, branch, newBranch: true });
@@ -487,17 +542,20 @@ function openColorPicker(w, anchor) {
 async function deleteWorktree(w) {
   const warn = [];
   if (w.dirty) warn.push('uncommitted changes');
-  if (w.aheadOrigin > 0) warn.push(`${w.aheadOrigin} UNPUSHED commit${w.aheadOrigin === 1 ? '' : 's'}`);
-  let msg = `Delete worktree "${w.name}" and remove its folder from disk?`;
-  if (warn.length) msg = `⚠  WARNING\n\n"${w.name}" has ${warn.join(' and ')}.\nThis work will be PERMANENTLY LOST.\n\nDelete anyway?`;
-  if (!confirm(msg)) return;
+  if (w.aheadOrigin > 0) warn.push(`${w.aheadOrigin} unpushed commit${w.aheadOrigin === 1 ? '' : 's'}`);
+  let bodyHTML = `Delete worktree <b class="text-app">${w.name}</b> and remove its folder from disk?`;
+  if (warn.length) {
+    bodyHTML = `<div class="rounded-md border-l-2 px-2.5 py-2" style="border-color:var(--red);background:color-mix(in srgb,var(--red) 10%,transparent)">`
+      + `<div class="font-semibold text-app">⚠ ${w.name} has ${warn.join(' and ')}.</div>`
+      + `<div class="mt-0.5" style="color:var(--red)">This work will be permanently lost.</div></div>`;
+  }
+  if (!(await confirmModal('Delete worktree', bodyHTML, { danger: true, confirmLabel: 'Delete worktree' }))) return;
   try {
     // stop any sessions running in this worktree first
     for (const s of state.sessions.filter((x) => x.cwd === w.path)) {
       try { await api('DELETE', `/api/sessions/${s.id}`); } catch (_) {}
       const rec = state.terms[s.id];
       if (rec) { if (rec.ws) rec.ws.close(); rec.term.dispose(); rec.host.remove(); delete state.terms[s.id]; }
-      state.tabs = state.tabs.filter((t) => t !== s.id);
     }
     await api('DELETE', '/api/worktrees', { path: w.path, force: true });
     if (state.selected === w.path) state.selected = state.info.repoDir;
@@ -565,18 +623,24 @@ function showLogin(status) {
   overlay.classList.add('flex');
   $('#login-rp').textContent = status.rpId || '';
   if (status.registered) {
+    // A passkey already exists for this host — just offer sign-in. The
+    // bootstrap/register box is only for the first passkey on a new host.
     $('#login-signin').classList.remove('hidden');
+    $('#login-register').classList.add('hidden');
     $('#passkey-login').onclick = async () => { try { await passkeyLogin(); location.reload(); } catch (e) { loginErr(e); } };
+  } else {
+    $('#login-signin').classList.add('hidden');
+    $('#login-register').classList.remove('hidden');
+    $('#passkey-register').onclick = async () => {
+      try { await passkeyRegister($('#reg-code').value.trim(), $('#reg-label').value.trim() || 'passkey'); location.reload(); }
+      catch (e) { loginErr(e); }
+    };
   }
-  $('#passkey-register').onclick = async () => {
-    try { await passkeyRegister($('#reg-code').value.trim(), $('#reg-label').value.trim() || 'passkey'); location.reload(); }
-    catch (e) { loginErr(e); }
-  };
 }
 
 // Add an additional passkey while already signed in (no bootstrap code needed).
 async function addPasskey() {
-  const label = prompt('Label for the new passkey (e.g. "phone"):');
+  const label = await promptModal('Add a passkey', { name: 'label', label: 'Label', placeholder: 'phone' }, 'Add');
   if (label === null) return;
   try { await passkeyRegister('', label || 'passkey'); toast('Passkey added', 'ok'); }
   catch (e) { toast(e.message); }
