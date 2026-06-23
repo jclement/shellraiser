@@ -26,6 +26,7 @@ type Coordinator struct {
 	reg     *Registry
 	port    string
 	auth    *auth.Manager
+	act     *activity
 	mu      sync.Mutex
 	proxies map[string]*httputil.ReverseProxy // id@port → cached reverse proxy
 }
@@ -35,7 +36,7 @@ type Coordinator struct {
 var dataPrefixes = []string{"/api/", "/ws/", "/p/", "/db", "/edit"}
 
 func newCoordinator(port string, am *auth.Manager) *Coordinator {
-	return &Coordinator{reg: newRegistry(), port: port, auth: am, proxies: map[string]*httputil.ReverseProxy{}}
+	return &Coordinator{reg: newRegistry(), port: port, auth: am, act: newActivity(), proxies: map[string]*httputil.ReverseProxy{}}
 }
 
 func (c *Coordinator) proxyFor(w *Worker) *httputil.ReverseProxy {
@@ -84,10 +85,15 @@ func (c *Coordinator) handleWorker(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such project: "+id, http.StatusNotFound)
 		return
 	}
+	// Lazy-resume: a request to an idle-stopped worker transparently wakes it.
 	if worker.State != "running" || worker.APIPort == "" {
-		http.Error(w, "project "+id+" is not running", http.StatusServiceUnavailable)
-		return
+		if !c.resume(worker) {
+			http.Error(w, "project "+id+" could not be started", http.StatusServiceUnavailable)
+			return
+		}
+		worker, _ = c.reg.get(id)
 	}
+	c.act.touch(id)
 	c.proxyFor(worker).ServeHTTP(w, r)
 }
 
@@ -125,6 +131,7 @@ func (c *Coordinator) controlMux() *http.ServeMux {
 		}
 		waitReady(worker) // don't hand back a URL until the worker actually serves
 		c.reg.put(worker)
+		c.act.touch(id)
 		resp := map[string]any{
 			"id": id, "port": c.port,
 			"authEnabled": c.auth.Enabled(),
@@ -219,6 +226,17 @@ func (c *Coordinator) Run(sockPath string) error {
 		defer t.Stop()
 		for range t.C {
 			c.reg.reconcile()
+		}
+	}()
+	go func() {
+		every := 60 * time.Second
+		if g := idleGrace(); g > 0 && g < every {
+			every = g // short grace (tests) → check promptly
+		}
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for range t.C {
+			c.reapIdle()
 		}
 	}()
 
