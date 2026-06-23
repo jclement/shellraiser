@@ -104,7 +104,7 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 		repoName:     repoName,
 		commands:     commands,
 		mgr: session.NewManager(session.Commands{
-			Shell: cfg.Shell, Editor: cfg.Editor, Claude: cfg.Claude, Codex: cfg.Codex,
+			Shell: cfg.Shell, Editor: cfg.Editor, Claude: cfg.Claude, Codex: cfg.Codex, Run: cfg.Run,
 		}),
 	}, nil
 }
@@ -291,6 +291,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"postgres":     s.cfg.PostgresEnabled(),
 		"editor":       s.cfg.CodeServerEnabled(),
 		"ssh":          os.Getenv("SHELLRAISER_SSH") == "1",
+		"run":          len(s.cfg.Run) > 0,
 	})
 }
 

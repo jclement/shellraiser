@@ -17,6 +17,7 @@ type Commands struct {
 	Editor []string // terminal editor
 	Claude []string // claude in danger mode (container is the sandbox)
 	Codex  []string // codex in danger mode
+	Run    []string // the project's `run` command (header Run button)
 }
 
 // Manager owns the live sessions and the status event fan-out.
@@ -73,6 +74,8 @@ func (m *Manager) argvFor(o CreateOpts) []string {
 		return m.cmds.Codex
 	case KindEditor:
 		return m.cmds.Editor
+	case KindRun:
+		return m.cmds.Run
 	default:
 		return m.cmds.Shell
 	}

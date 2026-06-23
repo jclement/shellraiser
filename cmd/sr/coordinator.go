@@ -239,6 +239,7 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 	// drop it from the registry (re-register with `sr`).
 	if worker.BareMetal {
 		if action == "stop" || action == "nuke" {
+			runTeardown(worker)
 			if worker.srv != nil {
 				worker.srv.Shutdown()
 			}
@@ -250,6 +251,7 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 	var err error
 	switch action {
 	case "stop":
+		runTeardown(worker)
 		c.pm.CloseWorker(id)
 		_, err = dockerRun("stop", worker.Container)
 	case "start":
@@ -257,6 +259,7 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 			c.reg.adopt(id)
 		}
 	case "nuke":
+		runTeardown(worker)
 		c.pm.CloseWorker(id)
 		_, _ = dockerRun("rm", "-f", worker.Container)
 		_, _ = dockerRun("volume", "rm", worker.Volume)

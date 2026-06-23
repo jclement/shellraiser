@@ -110,6 +110,7 @@ func cmdStop(args []string) {
 		if w.State != "running" {
 			continue
 		}
+		runTeardown(w)
 		if _, err := dockerRun("stop", w.Container); err != nil {
 			ui.Warn("sr", "stop %s: %v", w.ID, err)
 			continue
@@ -131,6 +132,7 @@ func cmdNuke(args []string) {
 	if !ok {
 		fatal("no such project: %s", id)
 	}
+	runTeardown(w)
 	_, _ = dockerRun("rm", "-f", w.Container)
 	_, _ = dockerRun("volume", "rm", w.Volume)
 	_ = exec.Command("docker", "network", "rm", w.Network).Run()

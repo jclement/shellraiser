@@ -179,6 +179,7 @@ func cmdDown(_ []string) {
 	}
 	for _, w := range reconciledRegistry().list() {
 		if w.State == "running" {
+			runTeardown(w)
 			_, _ = dockerRun("stop", w.Container)
 		}
 	}

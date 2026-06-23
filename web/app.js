@@ -455,6 +455,12 @@ function renderContext() {
   box.appendChild(el('span', 'shrink-0 text-faint', '·'));
   box.appendChild(el('span', 'truncate text-muted', w.detached ? 'detached' : (w.branch || '')));
   const acts = el('span', 'ml-auto flex shrink-0 items-center gap-0.5 pl-2');
+  if (state.info && state.info.run) {
+    const run = el('button', 'iconbtn px-1'); run.title = 'Run (from .shellraiser.toml)'; run.style.color = 'var(--green)';
+    run.innerHTML = svg('play', 'icon icon-sm');
+    run.onclick = () => launch('run', null, 'run');
+    acts.appendChild(run);
+  }
   const colorBtn = el('button', 'iconbtn px-1'); colorBtn.title = 'Color';
   colorBtn.innerHTML = `<span class="inline-block h-3 w-3 rounded-full" style="background:${w.color || 'transparent'};box-shadow:inset 0 0 0 1px var(--border)"></span>`;
   colorBtn.onclick = (ev) => { ev.stopPropagation(); openColorPicker(w, colorBtn); };

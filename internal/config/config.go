@@ -51,6 +51,11 @@ type Config struct {
 	Claude []string `toml:"claude"`
 	Codex  []string `toml:"codex"`
 
+	// First-class run/teardown for a project. Run powers the header Run button;
+	// Teardown executes when the workspace is stopped/nuked.
+	Run      []string `toml:"run"`
+	Teardown []string `toml:"teardown"`
+
 	// Custom launchers (toml-only).
 	Commands []Command `toml:"commands"`
 }
@@ -137,6 +142,12 @@ func mergeFile(c *Config, path string) error {
 	}
 	if md.IsDefined("codex") {
 		c.Codex = f.Codex
+	}
+	if md.IsDefined("run") {
+		c.Run = f.Run
+	}
+	if md.IsDefined("teardown") {
+		c.Teardown = f.Teardown
 	}
 	if md.IsDefined("commands") {
 		c.Commands = mergeCommands(c.Commands, f.Commands)

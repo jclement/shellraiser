@@ -143,6 +143,7 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 			<-sig
 			ui.Info("sr", "stopping %s…", id)
+			runTeardown(w)
 			if w.BareMetal {
 				if w.srv != nil {
 					w.srv.Shutdown()

@@ -23,6 +23,7 @@ const (
 	KindCodex   Kind = "codex"
 	KindEditor  Kind = "editor"
 	KindCommand Kind = "command"
+	KindRun     Kind = "run"
 )
 
 func (k Kind) isAgent() bool { return k == KindClaude || k == KindCodex }

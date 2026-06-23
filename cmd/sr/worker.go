@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -12,9 +13,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jclement/shellraiser/internal/config"
 	"github.com/jclement/shellraiser/internal/server"
+	"github.com/jclement/shellraiser/internal/ui"
 )
 
 // Worker is one project's backend, fronted by the coordinator. Normally a
@@ -80,6 +83,27 @@ func ensureAgentsVolume() {
 	if exec.Command("docker", "volume", "inspect", agentsVolume).Run() != nil {
 		_, _ = dockerRun("volume", "create", agentsVolume)
 	}
+}
+
+// runTeardown executes the project's `teardown` command before the workspace is
+// stopped/nuked (container: as ubuntu in /work, with a timeout; bare-metal: on
+// the host in the project dir). Best-effort.
+func runTeardown(w *Worker) {
+	cfg, _ := config.Load(w.Project)
+	if len(cfg.Teardown) == 0 {
+		return
+	}
+	ui.Info("sr", "teardown %s: %s", w.ID, strings.Join(cfg.Teardown, " "))
+	if w.BareMetal {
+		cmd := exec.Command(cfg.Teardown[0], cfg.Teardown[1:]...)
+		cmd.Dir = w.Project
+		_ = cmd.Run()
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	args := append([]string{"exec", "-u", "ubuntu", "-w", "/work", w.Container}, cfg.Teardown...)
+	_ = exec.CommandContext(ctx, "docker", args...).Run()
 }
 
 func workerKind(w *Worker) string {
