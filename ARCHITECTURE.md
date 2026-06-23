@@ -9,7 +9,7 @@ host **coordinator** (`sr`) fronts many per-project **worker** containers behind
             │                                                             │
    browser ─┼─▶ sr (coordinator, host binary)                            │
  tailnet ───┼─▶   • one UI (unified: all projects/worktrees/sessions)     │
-            │     • one passkey auth (enforced before every proxy hop)    │
+            │     • one password auth (enforced before every hop)         │
             │     • builds sr-<hash> image from embedded Dockerfile        │
             │     • per-project worker lifecycle + resource caps           │
             │     • dynamic port mapping (host/tailnet ⇄ worker, via SSH) │
@@ -185,7 +185,7 @@ config.toml          host/coordinator knobs (port, auth, rp_id, tailnet, default
 registry.json        hint cache of workers (flock via registry.lock); reconciled from docker
 coord.lock           single-instance flock; holds pid+port
 sr.sock              unix-socket control plane (0600) — CLI ⇄ daemon
-auth/store.json      passkey/WebAuthn credentials (moved from the worker; 0600)
+config.toml          host config: bcrypt password_hash + ssh/git passthrough (0600)
 ssh/coordinator_ed25519[.pub]   coordinator SSH keypair (0600), pubkey injected per worker
 tsnet/               tsnet.Server.Dir (Tailscale node state)
 secrets/<id>.env     per-project secrets (0600, --env-file); never in the repo

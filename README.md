@@ -45,7 +45,7 @@ There is nothing to install in the image and nothing to `.gitignore` in your rep
 
 ```bash
 sr                # ensure the coordinator, register cwd, open the UI
-sr --no-auth      # …without passkey auth (loopback-only; refused with --tailnet)
+sr --no-auth      # …without password auth (loopback-only; refused with --tailnet)
 sr ls   / status  # color dashboard: coordinator + every project + ports
 sr stop [id]      # stop a worker (all if omitted) — data kept
 sr nuke  id       # remove a worker's container + volume + network (repo untouched)
@@ -76,24 +76,51 @@ name = "dev"
 args = ["npm", "run", "dev"]
 ```
 
-Host-wide knobs (UI port, auth) are flags/global config, not per-project. The
-default base is shellraiser's own image (Ubuntu + zsh/starship, mise, helix, node,
-the agents, postgres, tailscale); a custom `base`/`dockerfile` gets a lean
+Host-wide knobs live in the **global config** `~/.config/shellraiser/config.toml`
+(or the in-UI **Settings** dialog), not per-project:
+
+```toml
+password_hash   = "…"     # bcrypt; managed via the UI (don't hand-edit)
+ssh_passthrough = true    # forward the host SSH agent (YubiKey) + ~/.ssh into workers
+git_passthrough = true    # bind host ~/.gitconfig into workers
+```
+
+The default base is shellraiser's own image (Ubuntu + zsh/starship, mise, helix,
+node, the agents, postgres, tailscale); a custom `base`/`dockerfile` gets a lean
 overlay (the worker binary, git, sshd, sudo, an `ubuntu` user) on top.
+
+## Auth
+
+One coordinator **password** (bcrypt) — no passkeys, so it works identically on
+localhost and the tailnet. On first run with no password set, a one-time password
+is printed to the log; sign in with it and you're prompted to choose a real one
+(stored in the global config). Change it anytime from **Settings**. `sr --no-auth`
+disables it for loopback-only dev (refused together with `--tailnet`).
+
+## SSH & git inside the sandbox
+
+With `ssh_passthrough` on, workers can use your **host SSH agent** — including a
+YubiKey — via the forwarded agent socket (engine-aware: the Docker Desktop /
+OrbStack bridge on macOS, `$SSH_AUTH_SOCK` on native Linux), plus your `~/.ssh`
+config and `known_hosts`. With `git_passthrough`, your `~/.gitconfig` is bound in,
+so `git push` and `ssh` just work in the sandbox. Both default **off** (they hand
+your agent/keys to an untrusted, danger-mode worker) — enable globally when you
+trust what runs there.
 
 ## Port mapping
 
 Every project's declared `ports` are auto-forwarded to **host loopback** via an
 SSH `-L` tunnel the moment the worker starts; discovered dev-server ports get a
-one-click **map** toggle in the UI. Mapping binds `127.0.0.1` only (never
-`0.0.0.0`) and works identically on macOS, Linux, and WSL2 — it's the one routing
-primitive that crosses Docker Desktop's VM boundary. HTTP services are also
-reachable through the in-UI `/p/<port>/` proxy (handy on an iPad).
+one-click **map** toggle in the UI. Mapping binds `127.0.0.1` (never `0.0.0.0`)
+and works identically on macOS, Linux, and WSL2 — it's the one routing primitive
+that crosses Docker Desktop's VM boundary. With `--tailnet` on, each mapped port
+**also** binds the tailnet IP, so it's reachable from your other devices. HTTP
+services are also reachable through the in-UI `/p/<port>/` proxy (handy on an iPad).
 
 ## How it works
 
 ```
- browser ─▶ sr (coordinator, host binary, one port, one passkey login)
+ browser ─▶ sr (coordinator, host binary, one port, one password login)
               • builds sr-<hash> images locally from embedded assets
               • reverse-proxies each worker under /w/<id>/ (token-injected)
               • SSH -L port-mapper · idle reaper · docker-label registry
@@ -112,14 +139,13 @@ data loss. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
 ## Security
 
-- **One front door.** Only the coordinator is reachable; it enforces passkey auth
-  (WebAuthn) before every proxy hop — HTTP and websockets alike.
+- **One front door.** Only the coordinator is reachable; it enforces a password (bcrypt)
+  before every proxy hop — HTTP and websockets alike.
 - **Untrusted workers.** Each worker is a danger-mode sandbox: its own docker
   network (no sibling reachability), `--memory`/`--pids` caps, a loopback-only API
   fenced by a per-worker token, and a hardened sshd (`AllowTcpForwarding local`,
   no agent/gateway/tunnel forwarding).
-- **Secrets stay host-side** in `~/.config/shellraiser` (0700): passkey store, the
-  coordinator SSH key, the worker registry. The shared agent-login volume is
+- **Secrets stay host-side** in `~/.config/shellraiser` (0700): the password hash, the coordinator SSH key, the worker registry. The shared agent-login volume is
   mounted **read-only** into workers; only `sr login` writes it.
 - The docker socket is never mounted by default (it's a host-takeover grant under
   a hostile agent).
