@@ -115,6 +115,24 @@ function modal({ title, bodyHTML, fields, actions }) {
         inputs[f.name] = cb; body.appendChild(wrap); continue;
       }
       body.appendChild(el('label', 'mb-1 mt-3 block text-[11px] text-muted', f.label));
+      if (f.type === 'textarea') {
+        const ta = el('textarea', 'input w-full px-2.5 py-2 text-sm text-app');
+        ta.rows = f.rows || 3; ta.placeholder = f.placeholder || ''; ta.value = f.value || '';
+        inputs[f.name] = ta; body.appendChild(ta); continue;
+      }
+      if (f.type === 'segmented') {
+        const hidden = el('input'); hidden.type = 'hidden'; hidden.value = f.value || (f.options[0] && f.options[0].value) || '';
+        const grp = el('div', 'flex gap-1.5');
+        const paint = () => [...grp.children].forEach((b) => b.classList.toggle('btn-primary', b.dataset.v === hidden.value));
+        for (const o of f.options) {
+          const b = el('button', 'btn flex-1 justify-center px-3 py-1.5 text-sm', o.label);
+          b.type = 'button'; b.dataset.v = o.value;
+          b.onclick = () => { hidden.value = o.value; paint(); };
+          grp.appendChild(b);
+        }
+        paint();
+        inputs[f.name] = hidden; body.appendChild(grp); continue;
+      }
       const inp = el('input', 'input w-full px-2.5 py-2 text-sm text-app' + (f.mono ? ' tracking-wider' : ''));
       if (f.type === 'password') inp.type = 'password';
       inp.placeholder = f.placeholder || ''; inp.value = f.value || '';
@@ -574,11 +592,11 @@ function renderPorts() {
 
 // ---- sessions & terminals -------------------------------------------------
 
-async function launch(kind, args, title) {
+async function launch(kind, args, title, prompt) {
   if (!state.selected) { toast('Pick a worktree first'); return; }
   unlockAudio();
   try {
-    const s = await api('POST', '/api/sessions', { kind, cwd: state.selected, args, title });
+    const s = await api('POST', '/api/sessions', { kind, cwd: state.selected, args, title, prompt });
     await loadSessions();
     openTab(s);
   } catch (e) { toast(e.message); }
@@ -952,6 +970,41 @@ async function newWorktree() {
   } catch (e) { toast(e.message); }
 }
 
+// newBranchAgent: one-step "new branch + kick off an agent" — pick/enter a
+// branch, write a starting prompt, choose an available agent, and it creates the
+// worktree, switches to it, and launches the agent already working on the prompt.
+async function newBranchAgent() {
+  let branches = [];
+  try { branches = (await api('GET', '/api/branches')) || []; } catch (_) {}
+  const avail = (state.info && state.info.agents) || {};
+  const agentOpts = [];
+  if (avail.claude) agentOpts.push({ value: 'claude', label: 'Claude' });
+  if (avail.codex) agentOpts.push({ value: 'codex', label: 'Codex' });
+  const fields = [
+    { name: 'branch', label: 'Branch (pick existing or type a new name)', placeholder: 'feature/my-thing', datalist: branches },
+    { name: 'prompt', label: 'Starting prompt (optional)', type: 'textarea', rows: 3, placeholder: 'What should the agent work on?' },
+  ];
+  if (agentOpts.length) fields.push({ name: 'agent', label: 'Agent', type: 'segmented', options: agentOpts });
+  const res = await modal({
+    title: 'New branch + agent',
+    fields,
+    actions: [{ label: 'Cancel', value: null }, { label: agentOpts.length ? 'Create & start' : 'Create', primary: true }],
+  });
+  if (!res || !res.branch) return;
+  const branch = res.branch;
+  const newBranch = !branches.includes(branch);
+  try {
+    const wt = await api('POST', '/api/worktrees', { name: branch, branch, newBranch });
+    await loadWorktrees();
+    selectWorktree(wt.path);
+    if (res.agent) {
+      await launch(res.agent, null, branch, res.prompt || undefined);
+    } else {
+      toast(`${newBranch ? 'Created' : 'Checked out'} worktree ${branch}`, 'ok');
+    }
+  } catch (e) { toast(e.message); }
+}
+
 async function renameWorktree(w) {
   const name = await promptModal('Rename worktree', { name: 'name', label: 'Display name (independent of branch)', placeholder: w.branch || w.name, value: w.displayName || '' }, 'Rename');
   if (name === null) return;
@@ -1183,6 +1236,7 @@ function wtNameFor(path) { const w = state.worktrees.find((x) => x.path === path
 
 function buildPaletteItems() {
   const items = [];
+  items.push({ icon: 'branch', label: 'New branch + agent…', hint: 'create a worktree and kick off claude/codex', run: () => newBranchAgent() });
   const target = state.selected || (state.worktrees[0] && state.worktrees[0].path);
   if (target) {
     for (const b of BUILTIN_LAUNCH) items.push({ icon: b.icon, label: `New ${b.label}`, hint: 'session · ' + wtNameFor(target), run: () => { state.selected = target; launch(b.kind, b.args, b.title); } });

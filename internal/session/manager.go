@@ -33,12 +33,13 @@ type Manager struct {
 
 // CreateOpts describes a session to start.
 type CreateOpts struct {
-	Kind  Kind
-	Cwd   string
-	Title string
-	Args  []string // overrides the kind's default command when set
-	Cols  uint16
-	Rows  uint16
+	Kind   Kind
+	Cwd    string
+	Title  string
+	Args   []string // overrides the kind's default command when set
+	Prompt string   // starting prompt for an agent (appended as its positional arg)
+	Cols   uint16
+	Rows   uint16
 }
 
 // NewManager builds a Manager, auto-detecting defaults for anything not set.
@@ -67,18 +68,36 @@ func (m *Manager) argvFor(o CreateOpts) []string {
 	if len(o.Args) > 0 {
 		return o.Args
 	}
+	var base []string
 	switch o.Kind {
 	case KindClaude:
-		return m.cmds.Claude
+		base = m.cmds.Claude
 	case KindCodex:
-		return m.cmds.Codex
+		base = m.cmds.Codex
 	case KindEditor:
-		return m.cmds.Editor
+		base = m.cmds.Editor
 	case KindRun:
-		return m.cmds.Run
+		base = m.cmds.Run
 	default:
-		return m.cmds.Shell
+		base = m.cmds.Shell
 	}
+	// A starting prompt is passed as the agent's positional argument (claude/codex
+	// both accept one), so a new session can kick off with work already queued.
+	if o.Prompt != "" && o.Kind.isAgent() {
+		return append(append([]string{}, base...), o.Prompt)
+	}
+	return base
+}
+
+// HasAgent reports whether the resolved launcher binary for an agent kind is on
+// PATH — used to offer only the agents actually installed in this worker.
+func (m *Manager) HasAgent(k Kind) bool {
+	argv := m.argvFor(CreateOpts{Kind: k})
+	if len(argv) == 0 {
+		return false
+	}
+	_, err := exec.LookPath(argv[0])
+	return err == nil
 }
 
 // Create starts a new session and begins streaming its output.

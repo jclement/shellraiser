@@ -297,6 +297,10 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"editor":       s.cfg.CodeServerEnabled(),
 		"ssh":          os.Getenv("SHELLRAISER_SSH") == "1",
 		"run":          len(s.cfg.Run) > 0,
+		"agents": map[string]bool{
+			"claude": s.mgr.HasAgent(session.KindClaude),
+			"codex":  s.mgr.HasAgent(session.KindCodex),
+		},
 	})
 }
 
@@ -470,6 +474,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Cwd     string   `json:"cwd"`
 		Title   string   `json:"title"`
 		Args    []string `json:"args"`
+		Prompt  string   `json:"prompt"`  // starting prompt for an agent session
 		Command string   `json:"command"` // name of a custom command from .shellraiser.toml
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -498,7 +503,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if cwd == "" {
 		cwd = s.repoDir
 	}
-	sess, err := s.mgr.Create(session.CreateOpts{Kind: kind, Cwd: cwd, Title: title, Args: args})
+	sess, err := s.mgr.Create(session.CreateOpts{Kind: kind, Cwd: cwd, Title: title, Args: args, Prompt: req.Prompt})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
