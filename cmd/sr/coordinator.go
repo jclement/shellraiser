@@ -507,7 +507,8 @@ func (c *Coordinator) gate(next http.Handler) http.Handler {
 
 func coordPublic(p string) bool {
 	switch p {
-	case "/", "/index.html", "/app.js", "/favicon.ico", "/logo.png":
+	case "/", "/index.html", "/app.js", "/favicon.ico", "/logo.png",
+		"/jbmono-regular.woff2", "/jbmono-bold.woff2":
 		return true
 	}
 	if strings.HasPrefix(p, "/api/auth/") {

@@ -636,7 +636,7 @@ function ensureTerm(s) {
 
   const term = new Terminal({
     cursorBlink: true,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontFamily: "'JetBrainsMono Nerd Font', ui-monospace, SFMono-Regular, Menlo, monospace",
     fontSize: isMobile() ? 14 : 13,
     theme: {
       background: cssVar('--term-bg') || '#0a0a0b',
@@ -658,6 +658,21 @@ function ensureTerm(s) {
   state.terms[s.id] = rec;
   fit(rec);
   connectWS(s.id);
+
+  // xterm measures glyph dimensions at open(); if the bundled Nerd Font loads
+  // after that, box-drawing/icon glyphs drift off the cell grid. Re-measure once
+  // the font is ready (a no-op fontSize round-trip forces xterm to recompute).
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      if (rec.closed) return;
+      try {
+        const fs = term.options.fontSize;
+        term.options.fontSize = fs + 0.001;
+        term.options.fontSize = fs;
+        fit(rec);
+      } catch (_) {}
+    });
+  }
 
   term.onData((d) => sendData(rec, applyCtrl(d)));
   term.onResize(({ cols, rows }) => { if (rec.ws && rec.ws.readyState === 1) rec.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });

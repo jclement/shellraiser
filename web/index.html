@@ -18,9 +18,21 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
   <script>
-    tailwind.config = { darkMode: 'class', theme: { extend: { fontFamily: { mono: ['ui-monospace', 'SFMono-Regular', 'JetBrains Mono', 'Menlo', 'monospace'] } } } };
+    tailwind.config = { darkMode: 'class', theme: { extend: { fontFamily: { mono: ['JetBrainsMono Nerd Font', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'] } } } };
   </script>
   <style>
+    /* JetBrainsMono Nerd Font (Mono): single-cell glyphs for Starship icons,
+       powerline separators, and box drawing in the terminal. Bundled woff2. */
+    @font-face {
+      font-family: 'JetBrainsMono Nerd Font';
+      font-style: normal; font-weight: 400; font-display: swap;
+      src: url('/jbmono-regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'JetBrainsMono Nerd Font';
+      font-style: normal; font-weight: 700; font-display: swap;
+      src: url('/jbmono-bold.woff2') format('woff2');
+    }
     /* Light: blues + grays. Dark: neutral ink + violet accent. */
     :root {
       --bg:#e7ecf3; --panel:#ffffff; --panel2:#dbe3ef; --hover:#e1e9f4;
