@@ -61,6 +61,7 @@ const BASE = (location.pathname.match(/^\/w\/[^/]+/) || [''])[0];
 const PROJECT_ID = BASE ? BASE.split('/')[2] : null;
 state.projectId = PROJECT_ID;
 state.projects = [];
+state.portMaps = {}; // containerPort → host loopback port (active SSH -L tunnels)
 
 async function request(method, path, body) {
   const res = await fetch(path, {
@@ -286,6 +287,7 @@ async function loadSessions() {
 
 async function loadPorts() {
   try { state.ports = await api('GET', '/api/ports'); } catch (_) { state.ports = []; }
+  await loadPortMaps();
   renderPorts();
   renderWorktrees();
 }
@@ -426,12 +428,48 @@ function renderTabs() {
 }
 
 function portChip(p) {
-  const a = el('a', 'btn px-1.5 py-0.5 text-center text-[11px]');
+  // Each port: an /p/ HTTP-proxy link plus a map toggle. Mapping opens a real
+  // host-loopback bind (SSH -L), so non-HTTP services work too — green when live.
+  const host = state.portMaps[p.port];
+  const wrap = el('div', 'flex items-center gap-0.5');
+  const a = el('a', 'btn flex-1 px-1.5 py-0.5 text-center text-[11px]');
   a.textContent = p.port;
-  a.title = `${p.process ? p.process + ' ' : ''}→ /p/${p.port}/ (proxied through slopbox)`;
-  a.href = `${BASE}/p/${p.port}/`; // reach the internal port via the slopbox proxy
+  a.title = `${p.process ? p.process + ' ' : ''}→ /p/${p.port}/ (HTTP proxy)`;
+  a.href = `${BASE}/p/${p.port}/`;
   a.target = '_blank';
-  return a;
+  wrap.appendChild(a);
+  const map = el('button', 'iconbtn px-1');
+  map.innerHTML = svg('external', 'icon icon-sm');
+  if (host) { map.classList.add('text-accent'); map.title = `mapped → 127.0.0.1:${host} (click to unmap)`; map.style.color = 'var(--green)'; }
+  else { map.title = 'Map to a host-loopback port (SSH tunnel)'; }
+  map.onclick = (ev) => { ev.stopPropagation(); host ? unmapPort(p.port) : mapPort(p.port); };
+  wrap.appendChild(map);
+  return wrap;
+}
+
+async function loadPortMaps() {
+  if (!state.projectId) return;
+  try {
+    const list = await capi('GET', `/api/workers/${state.projectId}/ports`);
+    state.portMaps = Object.fromEntries((list || []).map((m) => [m.container, m.host]));
+  } catch (_) { state.portMaps = {}; }
+}
+
+async function mapPort(port) {
+  try {
+    const r = await capi('POST', `/api/workers/${state.projectId}/ports/${port}/map`, {});
+    state.portMaps[port] = r.host;
+    toast(`Mapped ${port} → 127.0.0.1:${r.host}`, 'ok');
+    renderPorts();
+  } catch (e) { toast(e.message); }
+}
+
+async function unmapPort(port) {
+  try {
+    await capi('POST', `/api/workers/${state.projectId}/ports/${port}/unmap`, {});
+    delete state.portMaps[port];
+    renderPorts();
+  } catch (e) { toast(e.message); }
 }
 
 function renderPorts() {

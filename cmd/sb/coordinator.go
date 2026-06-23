@@ -9,6 +9,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,7 @@ type Coordinator struct {
 	port    string
 	auth    *auth.Manager
 	act     *activity
+	pm      *PortMapper
 	mu      sync.Mutex
 	proxies map[string]*httputil.ReverseProxy // id@port → cached reverse proxy
 }
@@ -132,6 +134,7 @@ func (c *Coordinator) controlMux() *http.ServeMux {
 		waitReady(worker) // don't hand back a URL until the worker actually serves
 		c.reg.put(worker)
 		c.act.touch(id)
+		go c.autoMap(worker) // forward declared ports in the background
 		resp := map[string]any{
 			"id": id, "port": c.port,
 			"authEnabled": c.auth.Enabled(),
@@ -172,12 +175,14 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 	var err error
 	switch action {
 	case "stop":
+		c.pm.CloseWorker(id)
 		_, err = dockerRun("stop", worker.Container)
 	case "start":
 		if _, err = dockerRun("start", worker.Container); err == nil {
 			c.reg.adopt(id)
 		}
 	case "nuke":
+		c.pm.CloseWorker(id)
 		_, _ = dockerRun("rm", "-f", worker.Container)
 		_, _ = dockerRun("volume", "rm", worker.Volume)
 		_ = removeNetwork(worker.Network)
@@ -192,6 +197,54 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 	}
 	c.reg.reconcile()
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handlePortMap maps/unmaps a worker port to a host-loopback port via SSH -L.
+func (c *Coordinator) handlePortMap(w http.ResponseWriter, r *http.Request) {
+	id, action := r.PathValue("id"), r.PathValue("action")
+	port, err := strconv.Atoi(r.PathValue("port"))
+	if err != nil {
+		http.Error(w, "invalid port", http.StatusBadRequest)
+		return
+	}
+	worker, ok := c.reg.get(id)
+	if !ok {
+		http.Error(w, "no such project", http.StatusNotFound)
+		return
+	}
+	switch action {
+	case "map":
+		hostPort, err := c.pm.Map(worker, port)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]any{"container": port, "host": hostPort, "addr": "127.0.0.1:" + strconv.Itoa(hostPort)})
+	case "unmap":
+		c.pm.Unmap(id, port)
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+	}
+}
+
+// handlePortList returns a worker's active host-port mappings.
+func (c *Coordinator) handlePortList(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	out := []map[string]int{}
+	for cp, hp := range c.pm.List(id) {
+		out = append(out, map[string]int{"container": cp, "host": hp})
+	}
+	writeJSON(w, out)
+}
+
+// autoMap forwards the project's declared .slopbox.toml `ports` on registration.
+func (c *Coordinator) autoMap(w *Worker) {
+	for _, p := range declaredPorts(w.Project) {
+		if _, err := c.pm.Map(w, p); err != nil {
+			ui.Warn("ports", "auto-map %s :%d: %v", w.ID, p, err)
+		}
+	}
 }
 
 // serveShell serves the embedded SPA: real asset paths (/app.js) resolve to the
@@ -213,6 +266,8 @@ func (c *Coordinator) serveShell(w http.ResponseWriter, r *http.Request) {
 func (c *Coordinator) Run(sockPath string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/workers", c.handleAPIWorkers)
+	mux.HandleFunc("GET /api/workers/{id}/ports", c.handlePortList)
+	mux.HandleFunc("POST /api/workers/{id}/ports/{port}/{action}", c.handlePortMap)
 	mux.HandleFunc("POST /api/workers/{id}/{action}", c.handleWorkerAction)
 	mux.HandleFunc("/w/{id}/", c.handleWorker)
 	mux.HandleFunc("/w/{id}", func(w http.ResponseWriter, r *http.Request) {

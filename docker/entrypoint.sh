@@ -169,9 +169,13 @@ PubkeyAuthentication yes
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
-AllowTcpForwarding yes
-AllowAgentForwarding yes
-GatewayPorts clientspecified
+# Coordinator opens only -L tunnels to in-container loopback services; lock the
+# rest down so a compromised worker can't pivot outward through our SSH channel.
+AllowTcpForwarding local
+PermitOpen 127.0.0.1:* [::1]:*
+GatewayPorts no
+AllowAgentForwarding no
+PermitTunnel no
 X11Forwarding no
 HostKey $HK/ssh_host_ed25519_key
 AuthorizedKeysFile $KEYS

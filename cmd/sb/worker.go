@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"github.com/jclement/slopbox/internal/config"
 )
 
 // Worker is one project's backend container, fronted by the coordinator.
@@ -23,6 +26,10 @@ type Worker struct {
 	Token     string // SLOPBOX_WORKER_TOKEN injected at run; required on every proxied hop
 	State     string // docker State.Status: running | exited | …
 }
+
+// coordAuthKey is the coordinator's authorized_keys line, set by the daemon at
+// startup and injected into each worker so the port-mapper can SSH in.
+var coordAuthKey string
 
 func containerName(id string) string { return "sb_" + id }
 func networkName(id string) string   { return "sb_net_" + id }
@@ -65,6 +72,35 @@ func tomlScalar(project, key string) string {
 		}
 	}
 	return ""
+}
+
+// declaredPorts resolves the project's .slopbox.toml `ports` (single ports and
+// "a-b" ranges) into a flat list to auto-map. Ranges are capped to keep a typo
+// from spawning thousands of listeners.
+func declaredPorts(project string) []int {
+	cfg, err := config.Load(project)
+	if err != nil {
+		return nil
+	}
+	var out []int
+	for _, spec := range cfg.Ports {
+		spec = strings.TrimSpace(spec)
+		if lo, hi, ok := strings.Cut(spec, "-"); ok {
+			a, e1 := strconv.Atoi(strings.TrimSpace(lo))
+			b, e2 := strconv.Atoi(strings.TrimSpace(hi))
+			if e1 != nil || e2 != nil || b < a || b-a > 64 {
+				continue
+			}
+			for p := a; p <= b; p++ {
+				out = append(out, p)
+			}
+			continue
+		}
+		if p, err := strconv.Atoi(spec); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func newToken() string {
@@ -119,6 +155,11 @@ func ensureWorker(id, project string) (*Worker, error) {
 		"-e", "SLOPBOX_WORKER_TOKEN=" + w.Token,
 		"-e", "SLOPBOX_SSH=1",
 		"-e", "SLOPBOX_NO_AUTH=1", // coordinator owns passkey auth; token fences the port
+	}
+	if coordAuthKey != "" {
+		// The coordinator's pubkey → the worker's authorized_keys, so only the
+		// coordinator can open -L tunnels through the worker's sshd.
+		args = append(args, "-e", "SLOPBOX_SSH_PUBKEY="+coordAuthKey)
 	}
 	args = append(args, workerImage)
 	if _, err := dockerRun(args...); err != nil {

@@ -82,7 +82,16 @@ func runDaemon(dir, port string, noAuth bool) {
 	}
 	am.Logf = func(format string, a ...any) { ui.Info("auth", format, a...) }
 
+	// Coordinator SSH key: signs tunnels to workers; its pubkey is injected into
+	// each worker (so only we can -L through their sshd).
+	signer, authKey, err := coordinatorSigner(dir)
+	if err != nil {
+		fatal("ssh key: %v", err)
+	}
+	coordAuthKey = authKey
+
 	co := newCoordinator(port, am)
+	co.pm = newPortMapper(signer)
 	co.reg.reconcile() // re-adopt any workers from a previous run
 	if err := co.Run(sockPath(dir)); err != nil {
 		fatal("%v", err)
