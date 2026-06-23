@@ -115,6 +115,33 @@ cmd_preview() { # internal: fzf preview pane
   docker logs --tail 10 "$(container_of "$n")" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true
 }
 
+# Expand the `ports` setting from a project's .slopbox.toml/.local into a list of
+# host ports to publish. Ranges (lo-hi) are expanded but CAPPED — publishing a
+# huge range makes Docker reserve a proxy per port (slow, heavy). Use /p/ or ssh
+# for large/unknown sets.
+config_ports() {
+  local proj="$1" spec="" f line cap=128
+  for f in "$proj/.slopbox.toml" "$proj/.slopbox.local.toml"; do
+    [ -f "$f" ] || continue
+    line="$(grep -E '^[[:space:]]*ports[[:space:]]*=' "$f" 2>/dev/null | head -1 || true)"
+    [ -n "$line" ] && spec="$line"
+  done
+  [ -n "$spec" ] || return 0
+  spec="${spec#*=}"
+  spec="$(printf '%s' "$spec" | tr -d "[]\"' ")"   # strip brackets/quotes/spaces
+  local -a out=(); local p n lo hi
+  for p in $(printf '%s' "$spec" | tr ',' ' '); do
+    [ -z "$p" ] && continue
+    case "$p" in
+      *-*) lo="${p%-*}"; hi="${p#*-}"
+           for ((n=lo; n<=hi; n++)); do [ "${#out[@]}" -ge "$cap" ] && break; out+=("$n"); done ;;
+      *)   out+=("$p") ;;
+    esac
+  done
+  [ "${#out[@]}" -ge "$cap" ] && echo "${C_YEL}» ports capped at $cap — use the /p/ proxy or 'ssh -L' for large sets${C_RST}" >&2
+  printf '%s\n' ${out[@]+"${out[@]}"}
+}
+
 cmd_start() {
   need_docker
   local image="$IMAGE_DEFAULT" port="7700" rebuild=0 docksock=0 pull=0 fg=0 ssh=0 sshport="2222" sshkey="" project=""
@@ -157,6 +184,8 @@ cmd_start() {
   )
   [ "$docksock" -eq 1 ] && mounts+=(-v /var/run/docker.sock:/var/run/docker.sock)
   for p in ${extra[@]+"${extra[@]}"}; do mounts+=(-p "$p:$p"); done
+  # Publish ports declared in the project's .slopbox.toml `ports = [...]`.
+  while IFS= read -r p; do [ -n "$p" ] && mounts+=(-p "$p:$p"); done < <(config_ports "$project")
 
   # SSH (key-only) with port forwarding: publish host $sshport → container :22.
   if [ "$ssh" -eq 1 ]; then

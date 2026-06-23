@@ -33,6 +33,10 @@ type Config struct {
 	Postgres     *bool  `toml:"postgres"` // nil ⇒ default (enabled)
 	CodeServer   *bool  `toml:"code"`     // code-server at /edit; nil ⇒ default (enabled)
 
+	// Host port mappings published by slopbox.sh on start (e.g. ["5137",
+	// "4000-4010"]). For HTTP, prefer the /p/<port>/ proxy — no publishing needed.
+	Ports []string `toml:"ports"`
+
 	// Command overrides for the built-in launchers.
 	Shell  []string `toml:"shell"`
 	Editor []string `toml:"editor"`
@@ -94,6 +98,9 @@ func mergeFile(c *Config, path string) error {
 	}
 	if md.IsDefined("code") {
 		c.CodeServer = f.CodeServer
+	}
+	if md.IsDefined("ports") {
+		c.Ports = f.Ports
 	}
 	if md.IsDefined("shell") {
 		c.Shell = f.Shell

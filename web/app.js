@@ -346,8 +346,8 @@ function renderTabs() {
 function portChip(p) {
   const a = el('a', 'btn px-1.5 py-0.5 text-center text-[11px]');
   a.textContent = p.port;
-  a.title = p.process ? `${p.process} (pid ${p.pid || '?'})` : '';
-  a.href = `http://${location.hostname}:${p.port}/`;
+  a.title = `${p.process ? p.process + ' ' : ''}→ /p/${p.port}/ (proxied through slopbox)`;
+  a.href = `/p/${p.port}/`; // reach the internal port via the slopbox proxy
   a.target = '_blank';
   return a;
 }

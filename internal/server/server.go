@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,6 +155,15 @@ func (s *Server) Run() error {
 		})
 	}
 
+	// Reach an internal dev-server port through slopbox at /p/<port>/ — proxies
+	// to 127.0.0.1:<port> inside the container (so it works even for loopback-
+	// bound servers), behind the same auth, no docker -p needed. Subpath caveat:
+	// SPAs with absolute asset paths need their base set to /p/<port>/.
+	mux.HandleFunc("/p/{port}/", s.handlePortProxy)
+	mux.HandleFunc("/p/{port}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/p/"+r.PathValue("port")+"/", http.StatusFound)
+	})
+
 	s.auth.Mount(mux)
 	mux.HandleFunc("/", s.handleStatic)
 
@@ -245,6 +255,30 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, worktree.Branches(s.repoDir))
+}
+
+func (s *Server) handlePortProxy(w http.ResponseWriter, r *http.Request) {
+	portStr := r.PathValue("port")
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		http.Error(w, "invalid port", http.StatusBadRequest)
+		return
+	}
+	target := &url.URL{Scheme: "http", Host: "127.0.0.1:" + portStr}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	prefix := "/p/" + portStr
+	base := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		base(req)
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
+		if !strings.HasPrefix(req.URL.Path, "/") {
+			req.URL.Path = "/" + req.URL.Path
+		}
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		http.Error(w, fmt.Sprintf("nothing reachable on 127.0.0.1:%s (%v)", portStr, err), http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
