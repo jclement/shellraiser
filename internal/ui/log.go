@@ -91,6 +91,20 @@ func Done(kind, title, worktree string) {
 	line("✓", green, "done", fmt.Sprintf("%s %s %s", c(cyan, kind), title, c(dim, "· "+worktree)))
 }
 
+// Colour primitives for ad-hoc views (e.g. the `sb status` dashboard). They
+// honour NO_COLOR like everything else in this package.
+func Dim(s string) string    { return c(dim, s) }
+func Bold(s string) string   { return c(bold, s) }
+func Green(s string) string  { return c(green, s) }
+func Red(s string) string    { return c(red, s) }
+func Yellow(s string) string { return c(yellow, s) }
+func Gray(s string) string   { return c(gray, s) }
+func Cyan(s string) string   { return c(cyan, s) }
+func Accent(s string) string { return c(purple, s) }
+
+// Print writes a raw line (used by multi-line views).
+func Print(s string) { fmt.Fprintln(os.Stdout, s) }
+
 // Exit logs a session exiting with a code.
 func Exit(kind, title string, code int) {
 	color := green

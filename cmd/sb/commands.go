@@ -39,18 +39,56 @@ func reconciledRegistry() *Registry {
 	return r
 }
 
+// cmdLs renders the status dashboard: coordinator header + a color-keyed row per
+// project. `sb` and `sb status` share it.
 func cmdLs(_ []string) {
 	if !dockerAlive() {
 		fatal("docker is not running")
 	}
+	dir, _ := globalDir()
+	ui.Print("")
+
+	// Coordinator header.
+	coordLine := ui.Gray("coordinator  ") + ui.Red("● down")
+	if m, ok := liveCoordinator(dir); ok {
+		coordLine = ui.Gray("coordinator  ") + ui.Green("● up") +
+			ui.Gray("   ui ") + ui.Cyan("http://127.0.0.1:"+m.Port+"/")
+	}
+	ui.Print("  " + ui.Accent("▟█▙ slopbox") + "  " + coordLine)
+	img := ui.Green("✔")
+	if !imageExists(workerImage) {
+		img = ui.Red("missing")
+	}
+	ui.Print("  " + ui.Accent("▜█▛") + ui.Gray("  image ") + workerImage + "  " + img)
+	ui.Print("")
+
 	workers := reconciledRegistry().list()
 	if len(workers) == 0 {
-		fmt.Println("no projects registered")
+		ui.Print("  " + ui.Gray("no projects registered — run `sb` in a git repo"))
 		return
 	}
 	for _, w := range workers {
-		fmt.Printf("  %-20s %-9s %s\n", w.ID, w.State, w.Project)
+		dot := ui.Green("●")
+		if w.State != "running" {
+			dot = ui.Gray("○")
+		}
+		ports := ""
+		if w.APIPort != "" {
+			ports = ui.Gray("  api :" + w.APIPort)
+			if w.SSHPort != "" {
+				ports += ui.Gray("  ssh :" + w.SSHPort)
+			}
+		}
+		ui.Print(fmt.Sprintf("  %s %s %s%s", dot, ui.Bold(pad(w.ID, 18)), ui.Gray(w.State), ports))
+		ui.Print("    " + ui.Dim(w.Project))
 	}
+}
+
+func pad(s string, n int) string {
+	for len(s) < n {
+		s += " "
+	}
+	return s
 }
 
 func cmdStop(args []string) {
