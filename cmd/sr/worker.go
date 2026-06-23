@@ -269,6 +269,7 @@ func ensureWorker(id, project, image string) (*Worker, error) {
 		"--cpu-shares", "1024",
 		"-e", "SHELLRAISER_REPO=/work",
 		"-e", "SHELLRAISER_ID=" + id,
+		"-e", "SHELLRAISER_NAME=" + filepath.Base(project), // real project name (mount basename is just "work")
 		"-e", "SHELLRAISER_WORKER_TOKEN=" + w.Token,
 		"-e", "SHELLRAISER_SSH=1",
 		"-e", "SHELLRAISER_NO_AUTH=1", // coordinator owns passkey auth; token fences the port

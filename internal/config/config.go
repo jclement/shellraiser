@@ -177,6 +177,9 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("SHELLRAISER_ID"); v != "" {
 		c.ID = v
 	}
+	if v := os.Getenv("SHELLRAISER_NAME"); v != "" {
+		c.Name = v
+	}
 	if v := os.Getenv("SHELLRAISER_RP_ID"); v != "" {
 		c.RPID = v
 	}

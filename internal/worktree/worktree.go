@@ -39,6 +39,12 @@ type Worktree struct {
 }
 
 // List returns the worktrees registered for the repo at repoDir.
+// accessibleDir reports whether path exists and is a directory we can reach.
+func accessibleDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
+}
+
 func List(repoDir string) ([]Worktree, error) {
 	out, err := git(repoDir, "worktree", "list", "--porcelain")
 	if err != nil {
@@ -47,7 +53,10 @@ func List(repoDir string) ([]Worktree, error) {
 	var trees []Worktree
 	var cur Worktree
 	flush := func() {
-		if cur.Path != "" {
+		// Only surface worktrees whose path is actually reachable here. git may
+		// list worktrees created elsewhere (e.g. on the host, outside this
+		// worker's mounts); we can't open a shell/editor in those, so hide them.
+		if cur.Path != "" && accessibleDir(cur.Path) {
 			cur.Name = filepath.Base(cur.Path)
 			trees = append(trees, cur)
 		}

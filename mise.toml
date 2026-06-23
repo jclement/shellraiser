@@ -16,7 +16,10 @@ done
 [tasks.build]
 description = "Cross-compile workers, embed them, and build the sr host binary into dist/"
 depends = ["worker-bins"]
-run = "CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/sr ./cmd/sr"
+run = """
+VER=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VER" -o dist/sr ./cmd/sr
+"""
 
 [tasks.build-worker]
 description = "Build just the in-container worker binary into dist/"

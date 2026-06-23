@@ -15,9 +15,14 @@ import (
 	"github.com/jclement/shellraiser/internal/ui"
 )
 
-// baseImage is the default shellraiser base (ubuntu + full toolchain), built once
-// and reused. Version-pinned so an sr upgrade rebuilds it.
-func baseImage() string { return "sr-base:" + version }
+// baseImage is the default shellraiser base (ubuntu + full toolchain), tagged by
+// a content hash of its recipe so it rebuilds only when the base changes — not on
+// every git-version bump.
+func baseImage() string {
+	df, _ := assets.FS.ReadFile("base.Dockerfile")
+	zsh, _ := assets.FS.ReadFile("zshrc")
+	return "sr-base:" + hashShort(append(append([]byte{}, df...), zsh...))
+}
 
 // engineArch returns the docker ENGINE architecture (amd64/arm64) — not the host
 // arch, since Apple Silicon can run an emulated amd64 engine.

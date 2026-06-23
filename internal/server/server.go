@@ -338,6 +338,11 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range trees {
 		trees[i].Color, trees[i].DisplayName, trees[i].Order = s.meta.get(trees[i].Path)
+		// The main worktree's name is the mount basename ("work"); show the real
+		// project name instead unless the user set a custom one.
+		if trees[i].IsMain && trees[i].DisplayName == "" {
+			trees[i].DisplayName = s.repoName
+		}
 	}
 	// Manual order first (1-based; 0 = unset sorts last), stable within each group.
 	sort.SliceStable(trees, func(i, j int) bool {

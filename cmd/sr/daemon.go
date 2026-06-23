@@ -20,10 +20,10 @@ import (
 	"tailscale.com/tsnet"
 )
 
-// version is the sr release version, overridden at build time via
-// -ldflags "-X main.version=…" (goreleaser). Also gates the base image tag and
-// the coordinator-supersede handshake.
-var version = "0.2.0"
+// version is the build version — a git describe (e.g. "a1b2c3d" or
+// "a1b2c3d-dirty") injected via -ldflags "-X main.version=…" by mise/goreleaser;
+// "dev" for a plain `go build`. Also gates the base image tag.
+var version = "dev"
 
 // coordMeta is written by the daemon so clients can find it.
 type coordMeta struct {

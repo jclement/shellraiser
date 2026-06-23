@@ -879,13 +879,18 @@ function openColorPicker(w, anchor) {
     pop.appendChild(sw);
   }
   document.body.appendChild(pop);
-  // Right-align to the anchor and clamp into the viewport (the button now lives
-  // at the right edge of the top bar, so a left-anchored popup ran off-screen).
-  const pw = pop.getBoundingClientRect().width;
-  let left = Math.min(r.right - pw, window.innerWidth - pw - 8);
-  pop.style.left = `${Math.max(8, left)}px`;
-  pop.style.visibility = 'visible';
-  setTimeout(() => document.addEventListener('click', function h() { pop.remove(); document.removeEventListener('click', h); }), 0);
+  // Right-align to the anchor and clamp into the viewport (the button lives at the
+  // right edge of the top bar). Measure on the next frame so the popup has laid
+  // out — on first open its width is otherwise 0 and it lands off-screen.
+  requestAnimationFrame(() => {
+    const pw = pop.getBoundingClientRect().width || 200;
+    const left = Math.min(r.right - pw, window.innerWidth - pw - 8);
+    pop.style.left = `${Math.max(8, left)}px`;
+    pop.style.visibility = 'visible';
+  });
+  // Close on an outside click; ignore clicks inside the popup itself.
+  const onDoc = (e) => { if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('mousedown', onDoc, true); } };
+  setTimeout(() => document.addEventListener('mousedown', onDoc, true), 0);
 }
 
 async function deleteWorktree(w) {

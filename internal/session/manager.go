@@ -43,7 +43,7 @@ type CreateOpts struct {
 // NewManager builds a Manager, auto-detecting defaults for anything not set.
 func NewManager(cmds Commands) *Manager {
 	if len(cmds.Shell) == 0 {
-		cmds.Shell = []string{firstAvailable([]string{"zsh", "bash", "sh"}, "sh")}
+		cmds.Shell = []string{defaultShell()}
 	}
 	if len(cmds.Editor) == 0 {
 		cmds.Editor = []string{firstAvailable([]string{"hx", "fresh", "vim", "vi"}, "vi")}
@@ -96,7 +96,15 @@ func (m *Manager) Create(o CreateOpts) (*Session, error) {
 	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = o.Cwd
+	// Only set the working dir if it actually exists. A stale/auto-discovered
+	// worktree whose path isn't present here would otherwise make fork/exec fail
+	// with a cryptic "no such file or directory" (Go reports the failed chdir as
+	// the exec path). Falling back to the worker's cwd keeps the shell usable.
+	if o.Cwd != "" {
+		if fi, err := os.Stat(o.Cwd); err == nil && fi.IsDir() {
+			cmd.Dir = o.Cwd
+		}
+	}
 	cmd.Env = append(append([]string{}, m.env...), "TERM=xterm-256color", "SHELLRAISER=1")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: o.Cols, Rows: o.Rows})
@@ -230,4 +238,23 @@ func firstAvailable(candidates []string, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// defaultShell resolves a login shell to an ABSOLUTE path that actually exists —
+// preferring $SHELL — so exec never tries a phantom like /usr/bin/zsh that the
+// PATH claims but isn't there.
+func defaultShell() string {
+	if sh := os.Getenv("SHELL"); sh != "" {
+		if fi, err := os.Stat(sh); err == nil && !fi.IsDir() {
+			return sh
+		}
+	}
+	for _, c := range []string{"zsh", "bash", "sh"} {
+		if p, err := exec.LookPath(c); err == nil {
+			if fi, e := os.Stat(p); e == nil && !fi.IsDir() {
+				return p
+			}
+		}
+	}
+	return "/bin/sh"
 }
