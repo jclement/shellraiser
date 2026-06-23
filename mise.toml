@@ -27,8 +27,12 @@ description = "Run the Go unit tests"
 run = "go test ./..."
 
 [tasks.e2e]
-description = "Run the Playwright end-to-end browser tests"
+description = "Run the Playwright end-to-end browser tests (worker UI)"
 run = "bash test/e2e/run.sh"
+
+[tasks.e2e-coord]
+description = "Run the v2 multi-project coordinator end-to-end test"
+run = "bash test/e2e/coordinator.sh"
 
 [tasks.dev]
 description = "Build the image and run a box in the foreground (--rm, live logs)"

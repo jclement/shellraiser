@@ -1,65 +1,43 @@
 # slopbox — build status
 
-What exists right now, and what's still rough. See [idea.md](idea.md) for the
-vision and [DESIGN.md](DESIGN.md) for the architecture.
+What exists right now. See [ARCHITECTURE.md](ARCHITECTURE.md) for the v2 design
+and [README.md](README.md) for usage. (v1's [DESIGN.md](DESIGN.md) describes the
+single-box model the worker is derived from.)
 
-## Works (validated)
+## v2 — the `sb` coordinator (validated)
 
-- **Go web app** — single binary, embeds the UI (`cmd/slopbox`, `internal/*`,
-  `web/`). Runs as non-root `ubuntu` (uid 1000), `$HOME` + tool PATHs integrated.
-- **Worktrees** — list / create / remove via real `git worktree`, with live
-  **git stats**: `+added/−deleted`, commits ahead of base, **dirty** flag,
-  **⇡/⇣ vs origin**.
-- **Sessions** — claude / codex / shell / editor on real PTYs; ring-buffer
-  replay on (re)attach; live xterm.js over a websocket bridge.
-- **Activity + ding** — running/idle/exited state machine; agents chime when
-  they finish a unit of work (SSE → WebAudio).
-- **Ports → worktrees** — listening ports detected (`ss`/`lsof`) and attributed
-  to the worktree whose session opened them, via `/proc` PID ancestry.
-- **Custom commands** — extra launcher buttons from `.slopbox.toml`.
-- **Config** — `.slopbox.toml` → `.slopbox.local.toml` → env, with precedence;
-  commands are toml-only.
-- **Auth: passkeys (WebAuthn)** — bootstrap code (logged) → register a passkey →
-  sign in with it; add more anytime. Per-origin RP IDs discovered from Host, or
-  pinned via `rp_id`. `SLOPBOX_TOKEN` fallback for automation; `--no-auth` for
-  trusted local/testing.
-- **Locked-down surface** — default-deny routing (only the login shell +
-  `/api/auth/*` are public), websocket origin checks (CSWSH), bootstrap-code rate
-  limiting. pgweb/code-server/postgres bind `127.0.0.1` only; the data APIs and
-  both proxies all 401 until you've passkey'd in (verified).
-- **Edit in VS Code** — `code-server` proxied at `/edit` (subpath, websockets,
-  GitLens); ✎ on a worktree opens it scoped to that folder. Behind auth.
-- **Postgres** (`postgres/postgres`) + **pgweb at `/db`** (reverse-proxied with
-  `--prefix=db`), data on its own volume; degrades gracefully if it can't init.
-- **`slopbox.sh` manager** — `start/list/stop/ish/open/logs/nuke`, fzf box-picker
-  with preview; `run.sh` is an alias for `start`.
-- **Tunnels** — Tailscale (private mesh) gives the box a tailnet IP;
-  no public tunnels (removed as too dangerous). SSH + /p/ proxy round it out.
-- **Image** — multi-stage Dockerfile: Ubuntu + zsh/starship, vim/helix/Fresh,
-  mise, Node, claude/codex, docker client, postgres/pgweb, tailscale.
-- **`run.sh`**, **`docker-compose.yml`**, **CI** (multi-arch → GHCR).
+- **Coordinator** (`cmd/sb`) — one host binary fronts many per-project worker
+  containers behind one UI + one port. Detached, self-daemonizing: `cd p1 && sb`
+  then `cd p2 && sb` join the same coordinator (flock single-instance, unix-socket
+  control plane). Registry reconciled from docker labels (re-adopts on restart).
+- **Unified UI** — one passkey login (enforced before every proxy hop, HTTP+WS);
+  project rail → worktrees → sessions; `/w/<id>/` proxy; container stop/start/nuke
+  controls. *(Playwright-verified: `test/e2e/coordinator.sh`.)*
+- **Hardened workers** — per-worker docker network, `--memory`/`--pids` caps,
+  loopback-only API fenced by a per-worker token, hardened sshd.
+- **SSH port-mapper** — declared `ports` auto-forwarded to host loopback via SSH
+  `-L`; discovered ports get a UI map toggle; reserved-port denylist; loopback-only
+  binds. *(Verified end-to-end.)*
+- **Self-contained image build** — `sb` embeds the Dockerfile assets + the
+  cross-compiled linux worker binaries and builds `sb-base` + a content-hash
+  overlay locally (no registry). Custom `base`/`dockerfile`. *(Verified incl.
+  `base = "node:20"`.)*
+- **Density** — postgres off by default; idle auto-stop after 30m with lazy-resume
+  on next request. *(Verified.)*
+- **Shared agent logins** — creds-only `:ro` mount, per-worker
+  `CLAUDE_CONFIG_DIR`/`CODEX_HOME`, `sb login` single-writer, `isolated_agents`
+  opt-out. *(Verified.)*
+- **CLI** — `sb`, `ls`/`status` (color dashboard), `stop`, `nuke`, `logs`,
+  `login`, `down`, `doctor`. goreleaser → Homebrew (`sb`).
 
-### Verified end-to-end
-- `go build`/`vet`/`gofmt` clean; image builds (3 GB).
-- Running container: postgres up, `/db` 200, ports attributed, tools present,
-  app runs as `ubuntu` with `HOME=/home/ubuntu`.
-- **Playwright (8/8)** in a real browser: worktree list + git stats render, a
-  shell session streams live terminal output (starship prompt), no console
-  errors, and the full **passkey register → logout → login** round-trip works
-  (virtual authenticator). `--no-auth` is the test entry point.
+## Inherited from v1 (the worker backend)
 
-## Stubbed / TODO
+- Worktrees with live git stats; PTY sessions (claude/codex/shell/editor) with
+  ring-buffer replay + WS reconnect; activity/ding; port detection; `/p/` proxy;
+  code-server `/edit`; opt-in postgres + `/db`; mobile keyboard chrome.
 
-- **Homebrew bootstrap** — the brew prefix is symlinked into the home mount and
-  `Brewfile`/`brew bundle` runs on startup, but brew itself isn't installed on
-  first run yet.
-- **Session persistence across slopbox restarts** — sessions live in-process
-  (survive disconnects, not a process restart). tmux-backed is the planned fix.
-- **Overflow resync** — on a slow-consumer drop, replay the ring to resync xterm.
-- **CDN assets** — Tailwind/xterm/simplewebauthn load from CDNs; vendor + embed
-  for a fully offline, CSP-tight image.
-- **GPG/SSH agent forwarding** — not wired (see idea.md).
-- **Passkey management UI** — add/remove works via API + a basic button; a real
-  credentials list/management panel would be nicer.
-- **Image size** — ~3 GB; slim the toolchain layers.
-</content>
+## Not yet done
+
+- **Tailscale via `tsnet`** (host-side single node + UI/port exposure on the
+  tailnet). The in-container Tailscale path from v1 still works in the meantime.
+- RP-ID pinning to an enumerated origin set (lands with tsnet).
