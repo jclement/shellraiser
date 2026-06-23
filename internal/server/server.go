@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -119,6 +120,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("POST /api/worktrees/color", s.handleSetWorktreeColor)
 	mux.HandleFunc("POST /api/worktrees/rename", s.handleRenameWorktree)
+	mux.HandleFunc("POST /api/worktrees/reorder", s.handleReorderWorktrees)
 	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
@@ -306,9 +308,29 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i := range trees {
-		trees[i].Color, trees[i].DisplayName = s.meta.get(trees[i].Path)
+		trees[i].Color, trees[i].DisplayName, trees[i].Order = s.meta.get(trees[i].Path)
 	}
+	// Manual order first (1-based; 0 = unset sorts last), stable within each group.
+	sort.SliceStable(trees, func(i, j int) bool {
+		oi, oj := trees[i].Order, trees[j].Order
+		if (oi == 0) != (oj == 0) {
+			return oj == 0 // ordered entries before unordered
+		}
+		return oi < oj
+	})
 	writeJSON(w, trees)
+}
+
+func (s *Server) handleReorderWorktrees(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	s.meta.setOrder(req.Paths)
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleSetWorktreeColor(w http.ResponseWriter, r *http.Request) {

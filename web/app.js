@@ -62,6 +62,9 @@ const PROJECT_ID = BASE ? BASE.split('/')[2] : null;
 state.projectId = PROJECT_ID;
 state.projects = [];
 state.portMaps = {}; // containerPort → host loopback port (active SSH -L tunnels)
+state.unseen = {};   // worktree path → true when a session finished but wasn't viewed
+state.wtFilter = ''; // quick-filter text for the worktree list
+state.dragPath = null;
 
 async function request(method, path, body) {
   const res = await fetch(path, {
@@ -344,71 +347,125 @@ function gitMeta(w) {
   return parts.join('<span class="text-faint"> · </span>');
 }
 
+// Aggregate per-worktree status (the rows show this, not the tab list):
+//   working   — a session in it is running
+//   attention — a session finished while you weren't looking at it
+//   idle      — nothing running, nothing unseen
+function worktreeStatus(path) {
+  const kids = state.sessions.filter((s) => s.cwd === path);
+  if (kids.some((s) => s.state === 'running')) return 'working';
+  if (state.unseen[path]) return 'attention';
+  return 'idle';
+}
+
+function statusDot(status) {
+  const v = status === 'working' ? '--green' : status === 'attention' ? '--yellow' : '--faint';
+  const wrap = el('span', 'relative ml-auto inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center');
+  wrap.title = status === 'working' ? 'working' : status === 'attention' ? 'finished — not looked at' : 'idle';
+  if (status === 'working' || status === 'attention') {
+    const ping = el('span', 'absolute inline-flex h-full w-full animate-ping rounded-full opacity-60');
+    ping.style.background = cssVar(v); wrap.appendChild(ping);
+  }
+  const core = el('span', 'relative inline-flex h-2 w-2 rounded-full');
+  core.style.background = cssVar(v); wrap.appendChild(core);
+  return wrap;
+}
+
+// Dense one-line git summary for the worktree row's second line.
+function wtMetaLine(w) {
+  const parts = [];
+  if (w.dirty) parts.push('<span style="color:var(--yellow)" title="uncommitted changes">●</span>');
+  if (w.added || w.deleted) parts.push(`<span style="color:var(--green)">+${w.added}</span><span style="color:var(--red)">−${w.deleted}</span>`);
+  if (w.ahead) parts.push(`<span class="text-muted" title="commits ahead of base">${w.ahead}↟</span>`);
+  if (w.hasUpstream && (w.aheadOrigin || w.behindOrigin)) {
+    let s = ''; if (w.aheadOrigin) s += `↑${w.aheadOrigin}`; if (w.behindOrigin) s += `↓${w.behindOrigin}`;
+    parts.push(`<span class="text-accent" title="vs origin">${s}</span>`);
+  }
+  return parts.join(' ');
+}
+
 function renderWorktrees() {
   const nav = $('#worktrees');
   nav.innerHTML = '';
-  for (const w of state.worktrees) {
+  const f = state.wtFilter.toLowerCase();
+  const list = state.worktrees.filter((w) => !f ||
+    (w.displayName || w.name || '').toLowerCase().includes(f) || (w.branch || '').toLowerCase().includes(f));
+  for (const w of list) {
     const sel = w.path === state.selected;
-    const row = el('div', `group relative mb-0.5 cursor-pointer rounded-md px-2 py-1.5 transition ${sel ? 'row-sel' : 'hover-row'}`);
-    if (w.color) row.style.borderLeft = `3px solid ${w.color}`;
-    row.style.paddingLeft = w.color ? '0.4rem' : '';
-    const top = el('div', 'flex items-center gap-2');
-    const ic = el('span', ''); ic.style.color = w.color || cssVar('--faint'); ic.innerHTML = svg('branch', 'icon icon-sm'); top.appendChild(ic);
-    const name = el('span', 'truncate text-sm ' + (sel ? 'text-app font-medium' : 'text-muted'), w.displayName || w.name);
+    const row = el('div', `wt-row group relative mb-px cursor-pointer rounded px-2 py-1 transition ${sel ? 'row-sel' : 'hover-row'}`);
+    row.draggable = true;
+    row.dataset.path = w.path;
+    if (w.color) { row.style.borderLeft = `3px solid ${w.color}`; row.style.paddingLeft = '0.45rem'; }
+    // line 1: name (+ main tag) + aggregate status dot
+    const top = el('div', 'flex items-center gap-1.5');
+    const name = el('span', 'truncate text-[13px] leading-tight ' + (sel ? 'text-app font-medium' : 'text-app'), w.displayName || w.name);
     if (w.displayName) name.title = `${w.name} · ${w.branch || ''}`;
     top.appendChild(name);
-    top.appendChild(gitBadge(w));
-    // hover actions: color · rename · open-in-editor · delete
-    const actions = el('span', 'ml-1 flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100');
-    const colorBtn = el('button', 'iconbtn px-1'); colorBtn.title = 'Color';
-    colorBtn.innerHTML = `<span class="inline-block h-3 w-3 rounded-full" style="background:${w.color || 'transparent'};box-shadow:inset 0 0 0 1px var(--border)"></span>`;
-    colorBtn.onclick = (ev) => { ev.stopPropagation(); openColorPicker(w, colorBtn); };
-    actions.appendChild(colorBtn);
-    const ren = el('button', 'iconbtn px-1'); ren.title = 'Rename'; ren.innerHTML = svg('pencil', 'icon icon-sm');
-    ren.onclick = (ev) => { ev.stopPropagation(); renameWorktree(w); };
-    actions.appendChild(ren);
-    if (state.info && state.info.editor) {
-      const edit = el('button', 'iconbtn px-1'); edit.title = 'Open in code-server'; edit.innerHTML = svg('external', 'icon icon-sm');
-      edit.onclick = (ev) => { ev.stopPropagation(); window.open(BASE + '/edit/?folder=' + encodeURIComponent(w.path), '_blank'); };
-      actions.appendChild(edit);
-    }
-    if (!w.isMain) {
-      const del = el('button', 'iconbtn px-1'); del.title = 'Delete worktree'; del.innerHTML = svg('trash', 'icon icon-sm');
-      del.onclick = (ev) => { ev.stopPropagation(); deleteWorktree(w); };
-      actions.appendChild(del);
-    }
-    top.appendChild(actions);
+    if (w.isMain) top.appendChild(el('span', 'shrink-0 rounded bg-panel2 px-1 text-[9px] uppercase text-faint', 'main'));
+    top.appendChild(statusDot(worktreeStatus(w.path)));
     row.appendChild(top);
-    const branch = el('div', 'truncate pl-6 text-[11px] text-faint', w.detached ? `detached @ ${(w.head || '').slice(0, 7)}` : (w.branch || ''));
-    row.appendChild(branch);
-    const meta = gitMeta(w);
-    if (meta) { const m = el('div', 'flex flex-wrap items-center gap-1.5 pl-6 pt-0.5 text-[11px]'); m.innerHTML = meta; row.appendChild(m); }
+    // line 2: branch + dense git meta
+    const sub = el('div', 'flex items-center gap-1.5 truncate text-[11px] leading-tight text-faint');
+    sub.appendChild(el('span', 'truncate', w.detached ? `@${(w.head || '').slice(0, 7)}` : (w.branch || '')));
+    const meta = wtMetaLine(w);
+    if (meta) { const m = el('span', 'shrink-0'); m.innerHTML = meta; sub.appendChild(m); }
+    row.appendChild(sub);
     row.onclick = () => selectWorktree(w.path);
     row.ondblclick = () => maybeCloseSidebar();
-
-    // nested sessions for this worktree
-    const kids = state.sessions.filter((s) => s.cwd === w.path);
-    for (const s of kids) {
-      const k = el('div', 'hover-row mt-0.5 ml-4 flex items-center gap-2 rounded px-2 py-1 text-xs');
-      k.appendChild(dot(s.state));
-      const ki = el('span', 'text-muted'); ki.innerHTML = svg(KIND[s.kind] || 'play', 'icon icon-sm'); k.appendChild(ki);
-      k.appendChild(el('span', 'truncate text-app', s.title));
-      k.onclick = (ev) => { ev.stopPropagation(); openTab(s); };
-      row.appendChild(k);
-    }
+    wireDrag(row);
     nav.appendChild(row);
   }
 }
 
+// ---- drag-and-drop reorder ------------------------------------------------
+
+function wireDrag(row) {
+  row.addEventListener('dragstart', (e) => { state.dragPath = row.dataset.path; row.classList.add('opacity-40'); e.dataTransfer.effectAllowed = 'move'; });
+  row.addEventListener('dragend', () => { row.classList.remove('opacity-40'); document.querySelectorAll('.drag-over').forEach((n) => n.classList.remove('drag-over')); });
+  row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('drag-over'); });
+  row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+  row.addEventListener('drop', (e) => { e.preventDefault(); row.classList.remove('drag-over'); dropWorktree(state.dragPath, row.dataset.path); });
+}
+
+function dropWorktree(from, to) {
+  if (!from || from === to) return;
+  const arr = state.worktrees.slice();
+  const fi = arr.findIndex((w) => w.path === from), ti = arr.findIndex((w) => w.path === to);
+  if (fi < 0 || ti < 0) return;
+  const [moved] = arr.splice(fi, 1);
+  arr.splice(ti, 0, moved);
+  state.worktrees = arr;
+  renderWorktrees();
+  api('POST', '/api/worktrees/reorder', { paths: arr.map((w) => w.path) }).catch(() => {});
+}
+
+// renderContext fills the top bar: selected worktree + its workspace actions
+// (color / rename / open-in-editor / delete) — these used to clutter every row.
 function renderContext() {
   const w = state.worktrees.find((x) => x.path === state.selected);
   const box = $('#active-context');
   box.innerHTML = '';
   if (!w) { box.appendChild(el('span', 'text-muted', 'Select a worktree')); return; }
-  const ic = el('span', 'text-accent'); ic.innerHTML = svg('branch', 'icon icon-sm'); box.appendChild(ic);
-  box.appendChild(el('span', 'font-semibold text-app', w.displayName || w.name));
-  box.appendChild(el('span', 'text-faint', '·'));
+  const ic = el('span', ''); ic.style.color = w.color || cssVar('--accent'); ic.innerHTML = svg('branch', 'icon icon-sm'); box.appendChild(ic);
+  box.appendChild(el('span', 'truncate font-semibold text-app', w.displayName || w.name));
+  box.appendChild(el('span', 'shrink-0 text-faint', '·'));
   box.appendChild(el('span', 'truncate text-muted', w.detached ? 'detached' : (w.branch || '')));
+  const acts = el('span', 'ml-auto flex shrink-0 items-center gap-0.5 pl-2');
+  const colorBtn = el('button', 'iconbtn px-1'); colorBtn.title = 'Color';
+  colorBtn.innerHTML = `<span class="inline-block h-3 w-3 rounded-full" style="background:${w.color || 'transparent'};box-shadow:inset 0 0 0 1px var(--border)"></span>`;
+  colorBtn.onclick = (ev) => { ev.stopPropagation(); openColorPicker(w, colorBtn); };
+  acts.appendChild(colorBtn);
+  const ren = el('button', 'iconbtn px-1'); ren.title = 'Rename'; ren.innerHTML = svg('pencil', 'icon icon-sm');
+  ren.onclick = () => renameWorktree(w); acts.appendChild(ren);
+  if (state.info && state.info.editor) {
+    const edit = el('button', 'iconbtn px-1'); edit.title = 'Open in code-server'; edit.innerHTML = svg('external', 'icon icon-sm');
+    edit.onclick = () => window.open(BASE + '/edit/?folder=' + encodeURIComponent(w.path), '_blank'); acts.appendChild(edit);
+  }
+  if (!w.isMain) {
+    const del = el('button', 'iconbtn px-1'); del.title = 'Delete worktree'; del.innerHTML = svg('trash', 'icon icon-sm');
+    del.onclick = () => deleteWorktree(w); acts.appendChild(del);
+  }
+  box.appendChild(acts);
 }
 
 function renderTabs() {
@@ -533,6 +590,7 @@ function syncTabs() { for (const s of selectedSessions()) ensureTerm(s); }
 
 function selectWorktree(path) {
   state.selected = path;
+  delete state.unseen[path]; // looked at → clear the attention indicator
   renderWorktrees(); renderContext(); renderPorts();
   syncTabs();
   const ids = tabsForSelected();
@@ -708,6 +766,9 @@ function connectEvents() {
     let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
     const s = state.sessions.find((x) => x.id === m.id);
     if (s) { s.state = m.state; if (m.state === 'exited') s.exitCode = m.exitCode; }
+    // A worktree you're not currently looking at that just finished gets the
+    // "attention" indicator until you select it.
+    if (m.ding && s && s.cwd !== state.selected) state.unseen[s.cwd] = true;
     renderWorktrees();
     renderTabs();
     if (m.ding) { ding(); flashTitle(`✅ ${m.title} done`); }
@@ -855,6 +916,15 @@ function wire() {
   window.addEventListener('resize', () => { const t = state.terms[state.active]; if (t) fit(t); updateMobileChrome(); });
   // Reflect branch/worktree changes made outside the UI when you return to it.
   window.addEventListener('focus', () => { loadWorktrees().catch(() => {}); loadSessions().catch(() => {}); loadPorts().catch(() => {}); });
+  // Quick filter across worktrees.
+  $('#wt-filter').oninput = (e) => { state.wtFilter = e.target.value; renderWorktrees(); };
+  // Collapse/expand the projects rail (persisted), for context switching.
+  const psec = $('#projects-section');
+  if (localStorage.getItem('sr-projects-collapsed') === '1') psec.classList.add('collapsed');
+  $('#projects-toggle').onclick = () => {
+    psec.classList.toggle('collapsed');
+    localStorage.setItem('sr-projects-collapsed', psec.classList.contains('collapsed') ? '1' : '0');
+  };
 }
 
 // ---- password auth --------------------------------------------------------
