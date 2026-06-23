@@ -839,7 +839,8 @@ function openColorPicker(w, anchor) {
   document.querySelectorAll('.color-pop').forEach((e) => e.remove());
   const pop = el('div', 'color-pop fixed z-50 flex gap-1.5 rounded-md border border-app bg-panel p-2 shadow-lg');
   const r = anchor.getBoundingClientRect();
-  pop.style.left = `${r.left}px`; pop.style.top = `${r.bottom + 4}px`;
+  pop.style.top = `${r.bottom + 4}px`;
+  pop.style.visibility = 'hidden'; // measure before placing so it never runs off-screen
   for (const c of WT_COLORS) {
     const sw = el('button', 'flex h-5 w-5 items-center justify-center rounded-full text-xs text-faint');
     sw.style.background = c || 'transparent';
@@ -854,6 +855,12 @@ function openColorPicker(w, anchor) {
     pop.appendChild(sw);
   }
   document.body.appendChild(pop);
+  // Right-align to the anchor and clamp into the viewport (the button now lives
+  // at the right edge of the top bar, so a left-anchored popup ran off-screen).
+  const pw = pop.getBoundingClientRect().width;
+  let left = Math.min(r.right - pw, window.innerWidth - pw - 8);
+  pop.style.left = `${Math.max(8, left)}px`;
+  pop.style.visibility = 'visible';
   setTimeout(() => document.addEventListener('click', function h() { pop.remove(); document.removeEventListener('click', h); }), 0);
 }
 
