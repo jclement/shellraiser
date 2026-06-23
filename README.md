@@ -68,9 +68,15 @@ base      = "node:20"         # bring your own base image (Debian/Ubuntu family)
 # dockerfile = "Dockerfile.dev"  # …or have shellraiser build yours first, then layer on top
 postgres  = true              # opt in to postgres + the /db UI (default: off)
 code      = true              # code-server at /edit (default: on, lazy-installed)
-ports     = ["5173", "8000-8010"]   # auto-map these to host loopback on start
 isolated_agents = true        # don't share the global claude/codex login
 bare_metal = true             # run on the host (no container) — see below
+run      = ["npm", "run", "dev"]          # green Run button in the header
+teardown = ["docker", "compose", "down"]  # runs when the workspace stops
+
+[[ports]]                     # named container→host mappings, forwarded on start
+name = "web"
+from = 5173                   # container port
+to   = 5173                   # host port (optional; defaults to `from`; overridable at runtime)
 
 [[commands]]                  # custom one-click launchers (toml only)
 name = "dev"

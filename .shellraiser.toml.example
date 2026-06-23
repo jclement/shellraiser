@@ -8,12 +8,23 @@
 # worktrees_dir = ""             # default: $SHELLRAISER_WORKTREES or <repo>/.worktrees
 # postgres      = true           # run postgres + pgweb (/db)
 # code          = true           # run code-server (/edit, per-worktree VS Code)
-# For HTTP, prefer reaching internal ports via /p/<port>/ (no publishing needed).
-# These are published as host ports by shellraiser.sh on start (ranges allowed, but
-# huge ranges are capped — Docker reserves a proxy per port):
-# ports         = ["5137", "4000-4010"]
 # no_auth       = false          # disable auth entirely (trusted local only)
-# rp_id         = "example.com"  # pin the WebAuthn RP ID (else discovered from Host)
+
+# First-class run/teardown for the project:
+# run      = ["npm", "run", "dev"]     # the header Run button
+# teardown = ["docker", "compose", "down"]   # runs when the workspace stops
+
+# Named container→host port mappings, forwarded on start (no ranges). `to`
+# defaults to `from`; a runtime change to the host port is stored and wins, so
+# conflicts resolve without editing this file. (HTTP also works via /p/<port>/.)
+# [[ports]]
+#   name = "web"
+#   from = 5173      # container port
+#   to   = 5173      # host port (optional; defaults to `from`)
+# [[ports]]
+#   name = "api"
+#   from = 8080
+#   to   = 18080
 
 # Override the built-in launcher commands (argv arrays):
 # claude = ["claude", "--dangerously-skip-permissions"]

@@ -14,6 +14,13 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// PortMap is a named container→host port mapping declared in .shellraiser.toml.
+type PortMap struct {
+	Name string `toml:"name"` // label (optional)
+	From int    `toml:"from"` // container/internal port
+	To   int    `toml:"to"`   // desired host port (0 ⇒ same as From)
+}
+
 // Command is a user-defined session launcher (e.g. "run the dev server").
 type Command struct {
 	Name string   `toml:"name"`
@@ -41,9 +48,10 @@ type Config struct {
 	IsolatedAgents bool   `toml:"isolated_agents"` // own agent-login volume (no sharing)
 	BareMetal      bool   `toml:"bare_metal"`      // run on the host (no container/isolation)
 
-	// Host port mappings published by shellraiser.sh on start (e.g. ["5137",
-	// "4000-4010"]). For HTTP, prefer the /p/<port>/ proxy — no publishing needed.
-	Ports []string `toml:"ports"`
+	// Named container→host port mappings, forwarded on start. Each is
+	// [[ports]] with name/from/to (to defaults to from). A runtime change to a
+	// port's host binding is stored and overrides `to` (so conflicts resolve).
+	Ports []PortMap `toml:"ports"`
 
 	// Command overrides for the built-in launchers.
 	Shell  []string `toml:"shell"`

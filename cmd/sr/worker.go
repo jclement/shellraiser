@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -206,33 +205,13 @@ func tomlScalar(project, key string) string {
 	return ""
 }
 
-// declaredPorts resolves the project's .shellraiser.toml `ports` (single ports and
-// "a-b" ranges) into a flat list to auto-map. Ranges are capped to keep a typo
-// from spawning thousands of listeners.
-func declaredPorts(project string) []int {
+// declaredPorts returns the project's named [[ports]] mappings to forward on start.
+func declaredPorts(project string) []config.PortMap {
 	cfg, err := config.Load(project)
 	if err != nil {
 		return nil
 	}
-	var out []int
-	for _, spec := range cfg.Ports {
-		spec = strings.TrimSpace(spec)
-		if lo, hi, ok := strings.Cut(spec, "-"); ok {
-			a, e1 := strconv.Atoi(strings.TrimSpace(lo))
-			b, e2 := strconv.Atoi(strings.TrimSpace(hi))
-			if e1 != nil || e2 != nil || b < a || b-a > 64 {
-				continue
-			}
-			for p := a; p <= b; p++ {
-				out = append(out, p)
-			}
-			continue
-		}
-		if p, err := strconv.Atoi(spec); err == nil {
-			out = append(out, p)
-		}
-	}
-	return out
+	return cfg.Ports
 }
 
 func newToken() string {

@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -67,6 +69,10 @@ func (c *Coordinator) proxyFor(w *Worker) *httputil.ReverseProxy {
 	p.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		http.Error(w, fmt.Sprintf("worker unreachable: %v", err), http.StatusBadGateway)
 	}
+	// Silence the default "read error during body copy: unexpected EOF" spam — a
+	// worker stopping or a stream (SSE/WS) being interrupted is normal; the
+	// ErrorHandler above still surfaces genuine dial failures as 502s.
+	p.ErrorLog = log.New(io.Discard, "", 0)
 	c.proxies[key] = p
 	return p
 }
@@ -356,17 +362,34 @@ func (c *Coordinator) handlePortList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// autoMap forwards the project's declared .shellraiser.toml `ports` plus any
-// previously-remembered mappings on registration.
+// autoMap forwards the project's declared [[ports]] (from→to) plus any
+// runtime-remembered mappings on registration. A stored override wins over the
+// config `to` (conflict resolution); if a requested host port is busy at startup
+// we fall back to an OS-assigned one so the service is still reachable.
 func (c *Coordinator) autoMap(w *Worker) {
-	for _, p := range declaredPorts(w.Project) {
-		if _, err := c.pm.Map(w, p, 0); err != nil {
-			ui.Warn("ports", "auto-map %s :%d: %v", w.ID, p, err)
+	stored := c.ports.get(w.ID)
+	applied := map[int]bool{}
+	apply := func(from, host int) {
+		if _, err := c.pm.Map(w, from, host); err != nil && host != 0 {
+			if _, err2 := c.pm.Map(w, from, 0); err2 != nil { // desired busy → OS-assign
+				ui.Warn("ports", "map %s :%d: %v", w.ID, from, err)
+			}
 		}
+		applied[from] = true
 	}
-	for container, host := range c.ports.get(w.ID) {
-		if _, err := c.pm.Map(w, container, host); err != nil {
-			ui.Warn("ports", "re-map %s :%d→:%d: %v", w.ID, container, host, err)
+	for _, p := range declaredPorts(w.Project) {
+		host := p.To
+		if host == 0 {
+			host = p.From
+		}
+		if h, ok := stored[p.From]; ok {
+			host = h // runtime override
+		}
+		apply(p.From, host)
+	}
+	for from, host := range stored { // ports the user mapped that aren't declared
+		if !applied[from] {
+			apply(from, host)
 		}
 	}
 }
