@@ -72,7 +72,9 @@ func (m *PortMapper) client(w *Worker) (*ssh.Client, error) {
 // Map forwards 127.0.0.1:<hostPort> on the host to 127.0.0.1:<containerPort>
 // inside the worker, preferring the same port number when free. Returns the
 // chosen host port.
-func (m *PortMapper) Map(w *Worker, containerPort int) (int, error) {
+// localPort is the desired host port: 0 ⇒ prefer the same number as the
+// container port, falling back to an OS-assigned one.
+func (m *PortMapper) Map(w *Worker, containerPort, localPort int) (int, error) {
 	if reservedPorts[containerPort] {
 		return 0, fmt.Errorf("port %d is reserved (internal service)", containerPort)
 	}
@@ -91,9 +93,17 @@ func (m *PortMapper) Map(w *Worker, containerPort int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	// Prefer the same number on the host loopback; fall back to an OS-assigned one.
-	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(containerPort))
+	// Bind the requested local port; if explicitly requested and busy, error so
+	// the user knows. Otherwise prefer the same number, then an OS-assigned one.
+	want := localPort
+	if want == 0 {
+		want = containerPort
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(want))
 	if err != nil {
+		if localPort != 0 {
+			return 0, fmt.Errorf("local port %d is unavailable", localPort)
+		}
 		ln, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return 0, err

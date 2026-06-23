@@ -24,6 +24,7 @@ const ICONS = {
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
   external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
 };
 const WT_COLORS = ['', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 function svg(name, cls = 'icon') { return `<svg class="${cls}" viewBox="0 0 24 24">${ICONS[name] || ''}</svg>`; }
@@ -458,7 +459,7 @@ function renderContext() {
   const ren = el('button', 'iconbtn px-1'); ren.title = 'Rename'; ren.innerHTML = svg('pencil', 'icon icon-sm');
   ren.onclick = () => renameWorktree(w); acts.appendChild(ren);
   if (state.info && state.info.editor) {
-    const edit = el('button', 'iconbtn px-1'); edit.title = 'Open in code-server'; edit.innerHTML = svg('external', 'icon icon-sm');
+    const edit = el('button', 'iconbtn px-1'); edit.title = 'Open editor (code-server)'; edit.innerHTML = svg('code', 'icon icon-sm');
     edit.onclick = () => window.open(BASE + '/edit/?folder=' + encodeURIComponent(w.path), '_blank'); acts.appendChild(edit);
   }
   if (!w.isMain) {
@@ -486,24 +487,44 @@ function renderTabs() {
   }
 }
 
-function portChip(p) {
-  // Each port: an /p/ HTTP-proxy link plus a map toggle. Mapping opens a real
-  // host-loopback bind (SSH -L), so non-HTTP services work too — green when live.
+// One row per port: a map toggle (maps the container port to a host-loopback
+// port via SSH -L, default same number, local port editable) + the port label +
+// an open-/p/ link.
+function portRow(p) {
   const host = state.portMaps[p.port];
-  const wrap = el('div', 'flex items-center gap-0.5');
-  const a = el('a', 'btn flex-1 px-1.5 py-0.5 text-center text-[11px]');
-  a.textContent = p.port;
-  a.title = `${p.process ? p.process + ' ' : ''}→ /p/${p.port}/ (HTTP proxy)`;
-  a.href = `${BASE}/p/${p.port}/`;
-  a.target = '_blank';
-  wrap.appendChild(a);
-  const map = el('button', 'iconbtn px-1');
-  map.innerHTML = svg('external', 'icon icon-sm');
-  if (host) { map.classList.add('text-accent'); map.title = `mapped → 127.0.0.1:${host} (click to unmap)`; map.style.color = 'var(--green)'; }
-  else { map.title = 'Map to a host-loopback port (SSH tunnel)'; }
-  map.onclick = (ev) => { ev.stopPropagation(); host ? unmapPort(p.port) : mapPort(p.port); };
-  wrap.appendChild(map);
-  return wrap;
+  const mapped = host != null;
+  const row = el('div', 'flex items-center gap-1.5 rounded px-1 py-0.5 hover-row');
+
+  // map toggle (filled green dot when mapped)
+  const toggle = el('button', 'iconbtn flex h-4 w-4 shrink-0 items-center justify-center');
+  toggle.innerHTML = `<span class="inline-block h-2.5 w-2.5 rounded-full" style="background:${mapped ? 'var(--green)' : 'transparent'};box-shadow:inset 0 0 0 1px var(--border)"></span>`;
+  toggle.title = mapped ? `mapped → 127.0.0.1:${host} (click to unmap)` : 'Map to localhost';
+  row.appendChild(toggle);
+
+  // port number + process name
+  const label = el('span', 'truncate text-app', String(p.port));
+  if (p.process) label.appendChild(el('span', 'pl-1 text-faint', p.process));
+  label.title = p.process || '';
+  row.appendChild(label);
+
+  // editable local port (defaults to the same number; tweak before/while mapping)
+  const right = el('div', 'ml-auto flex shrink-0 items-center gap-1');
+  const local = el('input', 'input w-12 px-1 py-0.5 text-right text-[11px] text-app');
+  local.value = String(mapped ? host : p.port);
+  local.title = 'Local port';
+  local.onclick = (e) => e.stopPropagation();
+  local.onchange = () => { const v = parseInt(local.value, 10) || p.port; if (mapped) mapPort(p.port, v); };
+  right.appendChild(local);
+
+  toggle.onclick = (e) => { e.stopPropagation(); mapped ? unmapPort(p.port) : mapPort(p.port, parseInt(local.value, 10) || p.port); };
+
+  // open through the /p/ HTTP proxy
+  const open = el('a', 'iconbtn px-0.5'); open.title = `Open /p/${p.port}/`;
+  open.innerHTML = svg('external', 'icon icon-sm');
+  open.href = `${BASE}/p/${p.port}/`; open.target = '_blank';
+  right.appendChild(open);
+  row.appendChild(right);
+  return row;
 }
 
 async function loadPortMaps() {
@@ -514,9 +535,9 @@ async function loadPortMaps() {
   } catch (_) { state.portMaps = {}; }
 }
 
-async function mapPort(port) {
+async function mapPort(port, local) {
   try {
-    const r = await capi('POST', `/api/workers/${state.projectId}/ports/${port}/map`, {});
+    const r = await capi('POST', `/api/workers/${state.projectId}/ports/${port}/map`, { local: local || 0 });
     state.portMaps[port] = r.host;
     toast(`Mapped ${port} → 127.0.0.1:${r.host}`, 'ok');
     renderPorts();
@@ -532,13 +553,15 @@ async function unmapPort(port) {
 }
 
 function renderPorts() {
-  // Scoped to the selected worktree: only ports owned by a process running there.
+  // Scoped to the selected worktree, one row per port, sorted by number.
   const box = $('#ports');
   box.innerHTML = '';
-  const mine = state.ports.filter((p) => p.worktree && p.worktree === state.selected);
+  const mine = state.ports
+    .filter((p) => p.worktree && p.worktree === state.selected)
+    .sort((a, b) => a.port - b.port);
   $('#ports-count').textContent = mine.length ? mine.length : '';
-  if (!mine.length) { box.appendChild(el('div', 'col-span-3 text-faint', 'none')); return; }
-  for (const p of mine) box.appendChild(portChip(p));
+  if (!mine.length) { box.appendChild(el('div', 'text-faint', 'none')); return; }
+  for (const p of mine) box.appendChild(portRow(p));
 }
 
 // ---- sessions & terminals -------------------------------------------------

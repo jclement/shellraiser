@@ -267,7 +267,12 @@ func (c *Coordinator) handlePortMap(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action {
 	case "map":
-		hostPort, err := c.pm.Map(worker, port)
+		var req struct {
+			Local int `json:"local"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		c.pm.Unmap(id, port) // re-map cleanly so a changed local port takes effect
+		hostPort, err := c.pm.Map(worker, port, req.Local)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -294,7 +299,7 @@ func (c *Coordinator) handlePortList(w http.ResponseWriter, r *http.Request) {
 // autoMap forwards the project's declared .shellraiser.toml `ports` on registration.
 func (c *Coordinator) autoMap(w *Worker) {
 	for _, p := range declaredPorts(w.Project) {
-		if _, err := c.pm.Map(w, p); err != nil {
+		if _, err := c.pm.Map(w, p, 0); err != nil {
 			ui.Warn("ports", "auto-map %s :%d: %v", w.ID, p, err)
 		}
 	}
