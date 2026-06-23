@@ -12,6 +12,19 @@ import (
 )
 
 func main() {
+	// cmd-shim mode: stand in for a device-exposed CLI tool (op, gh, …). Invoked
+	// as `shellraiser cmd-shim <name> <args…>` by the per-tool shims the entrypoint
+	// installs. Handled before flag parsing so tool args pass through untouched.
+	if len(os.Args) > 1 && os.Args[1] == "cmd-shim" {
+		name := ""
+		var rest []string
+		if len(os.Args) > 2 {
+			name = os.Args[2]
+			rest = os.Args[3:]
+		}
+		os.Exit(runShim(name, rest))
+	}
+
 	log.SetFlags(log.Ltime)
 
 	repo := flag.String("repo", envOr("SHELLRAISER_REPO", ""), "project git repo (default: current dir)")

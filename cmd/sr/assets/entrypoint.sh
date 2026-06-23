@@ -310,6 +310,25 @@ chmod +x /usr/local/bin/sr-open /usr/local/bin/sr-copy
 ln -sf /usr/local/bin/sr-open /usr/local/bin/open
 ln -sf /usr/local/bin/sr-open /usr/local/bin/xdg-open
 
+# 4e. Device command relay: tools the connected device exposes (op, gh, …) run on
+#     the device, not in here. `sr-cmd <tool> args` forwards to it; per-tool shims
+#     (e.g. `op`) call sr-cmd by name. We install the `op` shim unless an
+#     OP_SERVICE_ACCOUNT_TOKEN is present (then the real op runs here, headless).
+cat > /usr/local/bin/sr-cmd <<'SCRIPT'
+#!/bin/sh
+[ -z "$1" ] && { echo "usage: sr-cmd <tool> [args...]"; exit 1; }
+tool="$1"; shift
+exec shellraiser cmd-shim "$tool" "$@"
+SCRIPT
+chmod +x /usr/local/bin/sr-cmd
+if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+  cat > /usr/local/bin/op <<'SCRIPT'
+#!/bin/sh
+exec shellraiser cmd-shim op "$@"
+SCRIPT
+  chmod +x /usr/local/bin/op
+fi
+
 # 5. Run the app as the unprivileged user, with HOME + tool paths integrated so
 #    directly-launched agents/editors see mise- and brew-installed tools.
 export HOME="$HOME_DIR"

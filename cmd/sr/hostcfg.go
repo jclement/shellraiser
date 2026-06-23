@@ -34,6 +34,30 @@ type hostConfig struct {
 	// 1Password CLI `op` works headless, or other account-wide secrets/API keys).
 	// These reach the untrusted worker — treat like the shared agent creds.
 	Env map[string]string `toml:"env"`
+	// ExposeCommands is the set of CLI tools the in-process local device forwards
+	// into workers (e.g. "op"); empty defaults to "op" when installed. A remote
+	// device declares its own set in device.toml instead.
+	ExposeCommands []string `toml:"expose_commands"`
+	// DeviceLinkAddr is the listen address for the device-link SSH server
+	// (host:port). Empty disables it (today's local-only behavior). `sr serve` sets
+	// a default. Auth is the authorized_devices allowlist + host-key pinning, so it
+	// is safe on any network (decision #1) — but binding a reachable interface is a
+	// deliberate opt-in, hence empty by default.
+	DeviceLinkAddr string `toml:"device_link_addr"`
+	// AuthorizedDevices is the allowlist of device public keys permitted to open a
+	// device link to this backend (see docs/device-link.md). A device is added here
+	// only via interactive approval in the UI; the device itself decides which of
+	// the capabilities it announces it will actually honor (see device.toml).
+	AuthorizedDevices []authorizedDevice `toml:"authorized_devices"`
+}
+
+// authorizedDevice is one approved device link: its public key (authorized_keys
+// line) plus human metadata. The capabilities it may exercise are enforced on the
+// device side; what we keep here is purely the auth allowlist + display info.
+type authorizedDevice struct {
+	Name  string `toml:"name"`  // human label chosen at enrollment
+	Key   string `toml:"key"`   // ssh authorized_keys-format public line
+	Added string `toml:"added"` // ISO date approved (informational)
 }
 
 // hostCfg is the loaded global config, set by the daemon at startup and read by

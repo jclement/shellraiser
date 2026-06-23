@@ -22,11 +22,13 @@ var reservedPorts = map[int]bool{5432: true, 8081: true, 8082: true, 7000: true,
 // reaches arbitrary container TCP identically on macOS, Linux, and WSL2.
 type PortMapper struct {
 	signer  ssh.Signer
+	dev     Device          // where host listeners bind + the SSH agent lives
 	ts      tailnetListener // non-nil when --tailnet is on; also binds the tailnet IP
 	mu      sync.Mutex
 	clients map[string]*ssh.Client      // workerID → ssh client
 	fwds    map[string]map[int]*forward // workerID → containerPort → forward
 	agents  map[string]net.Listener     // workerID → in-worker agent relay listener
+	cmds    map[string]net.Listener     // workerID → in-worker command relay listener
 }
 
 // tailnetListener is the slice of tsnet.Server we use: Listen on the tailnet IP.
@@ -35,16 +37,56 @@ type tailnetListener interface {
 }
 
 type forward struct {
-	lns      []net.Listener // loopback (+ tailnet, when enabled)
+	closers  []func() // device listener (+ tailnet listener, when enabled)
 	hostPort int
 }
 
-func newPortMapper(signer ssh.Signer, ts tailnetListener) *PortMapper {
-	pm := &PortMapper{signer: signer, clients: map[string]*ssh.Client{}, fwds: map[string]map[int]*forward{}, agents: map[string]net.Listener{}}
+// serveListener accepts on ln and bridges every connection to a fresh dial().
+// The listener may be loopback (local device), the tailnet IP (backend), or
+// remote (a device opening channels back); dial always reaches the worker from
+// the coordinator.
+func serveListener(ln net.Listener, dial DialFunc) {
+	for {
+		local, err := ln.Accept()
+		if err != nil {
+			return // listener closed (unmapped)
+		}
+		go func() {
+			remote, err := dial()
+			if err != nil {
+				_ = local.Close()
+				return
+			}
+			bridgeConn(local, remote)
+		}()
+	}
+}
+
+// bridgeConn pipes two connections together until either side closes.
+func bridgeConn(a, b net.Conn) {
+	defer a.Close()
+	defer b.Close()
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(a, b); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(b, a); done <- struct{}{} }()
+	<-done
+}
+
+func newPortMapper(signer ssh.Signer, dev Device, ts tailnetListener) *PortMapper {
+	pm := &PortMapper{signer: signer, dev: dev, clients: map[string]*ssh.Client{}, fwds: map[string]map[int]*forward{}, agents: map[string]net.Listener{}, cmds: map[string]net.Listener{}}
 	if ts != nil {
 		pm.ts = ts
 	}
 	return pm
+}
+
+// setDevice swaps the active host-presence device (local ⇄ a connected remote).
+// New forwards bind on the new device; existing forwards are left on whatever
+// device bound them (per-device migration is slice 6).
+func (m *PortMapper) setDevice(d Device) {
+	m.mu.Lock()
+	m.dev = d
+	m.mu.Unlock()
 }
 
 func (m *PortMapper) client(w *Worker) (*ssh.Client, error) {
@@ -90,50 +132,52 @@ func (m *PortMapper) Map(w *Worker, containerPort, localPort int) (int, error) {
 	}
 	m.mu.Unlock()
 
-	cl, err := m.client(w)
-	if err != nil {
-		return 0, err
-	}
-	// Bind the requested local port; if explicitly requested and busy, error so
-	// the user knows. Otherwise prefer the same number, then an OS-assigned one.
+	// dial reaches the worker's container port from the coordinator; the device
+	// supplies the listener that feeds it (loopback locally, or remote).
+	dial := m.workerDialer(w, containerPort)
 	want := localPort
 	if want == 0 {
 		want = containerPort
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(want))
+	hostPort, closer, err := m.dev.Forward(want, localPort != 0, dial)
 	if err != nil {
-		if localPort != 0 {
-			return 0, fmt.Errorf("local port %d is unavailable", localPort)
-		}
-		ln, err = net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return 0, err
-		}
+		return 0, err
 	}
-	hostPort := ln.Addr().(*net.TCPAddr).Port
-	go m.serve(ln, cl, containerPort)
 
 	m.mu.Lock()
 	if m.fwds[w.ID] == nil {
 		m.fwds[w.ID] = map[int]*forward{}
 	}
-	m.fwds[w.ID][containerPort] = &forward{lns: []net.Listener{ln}, hostPort: hostPort}
+	m.fwds[w.ID][containerPort] = &forward{closers: []func(){closer}, hostPort: hostPort}
 	m.mu.Unlock()
-	ui.Info("ports", "mapped %s :%d → 127.0.0.1:%d", w.ID, containerPort, hostPort)
+	ui.Info("ports", "mapped %s :%d → %s:%d", w.ID, containerPort, m.dev.Name(), hostPort)
 
-	// Also expose on the tailnet IP (same port number) when --tailnet is on.
-	// tsnet.Listen blocks until the node is authenticated, so do it async — the
-	// loopback mapping is already live and never waits on the tailnet.
+	// Also expose on the tailnet IP (same port number) when --tailnet is on — this
+	// is the backend's own tailnet bind, additive to (and independent of) the
+	// device bind. tsnet.Listen blocks until the node is authenticated, so do it
+	// async — the device mapping is already live and never waits on the tailnet.
 	if m.ts != nil {
-		go m.bindTailnet(w.ID, cl, containerPort)
+		go m.bindTailnet(w.ID, containerPort, dial)
 	}
 	return hostPort, nil
+}
+
+// workerDialer returns a DialFunc that opens the worker's container port over the
+// coordinator↔worker SSH tunnel.
+func (m *PortMapper) workerDialer(w *Worker, containerPort int) DialFunc {
+	return func() (net.Conn, error) {
+		cl, err := m.client(w)
+		if err != nil {
+			return nil, err
+		}
+		return cl.Dial("tcp", "127.0.0.1:"+strconv.Itoa(containerPort))
+	}
 }
 
 // bindTailnet attaches a tailnet listener for an already-mapped port once the
 // tsnet node is up. If the mapping was removed meanwhile, the late listener is
 // closed.
-func (m *PortMapper) bindTailnet(workerID string, cl *ssh.Client, containerPort int) {
+func (m *PortMapper) bindTailnet(workerID string, containerPort int, dial DialFunc) {
 	tln, err := m.ts.Listen("tcp", ":"+strconv.Itoa(containerPort))
 	if err != nil {
 		ui.Warn("ports", "tailnet bind :%d failed: %v", containerPort, err)
@@ -146,31 +190,10 @@ func (m *PortMapper) bindTailnet(workerID string, cl *ssh.Client, containerPort 
 		_ = tln.Close()
 		return
 	}
-	f.lns = append(f.lns, tln)
+	f.closers = append(f.closers, func() { _ = tln.Close() })
 	m.mu.Unlock()
 	ui.Info("ports", "mapped %s :%d on the tailnet too", workerID, containerPort)
-	m.serve(tln, cl, containerPort)
-}
-
-func (m *PortMapper) serve(ln net.Listener, cl *ssh.Client, containerPort int) {
-	for {
-		local, err := ln.Accept()
-		if err != nil {
-			return // listener closed (unmapped)
-		}
-		go func() {
-			defer local.Close()
-			remote, err := cl.Dial("tcp", "127.0.0.1:"+strconv.Itoa(containerPort))
-			if err != nil {
-				return
-			}
-			defer remote.Close()
-			done := make(chan struct{}, 2)
-			go func() { io.Copy(remote, local); done <- struct{}{} }()
-			go func() { io.Copy(local, remote); done <- struct{}{} }()
-			<-done
-		}()
-	}
+	serveListener(tln, dial)
 }
 
 // Unmap tears down a single forward.
@@ -178,8 +201,8 @@ func (m *PortMapper) Unmap(workerID string, containerPort int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if f, ok := m.fwds[workerID][containerPort]; ok {
-		for _, ln := range f.lns {
-			_ = ln.Close()
+		for _, c := range f.closers {
+			c()
 		}
 		delete(m.fwds[workerID], containerPort)
 	}
@@ -191,14 +214,18 @@ func (m *PortMapper) CloseWorker(workerID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, f := range m.fwds[workerID] {
-		for _, ln := range f.lns {
-			_ = ln.Close()
+		for _, c := range f.closers {
+			c()
 		}
 	}
 	delete(m.fwds, workerID)
 	if ln, ok := m.agents[workerID]; ok {
 		_ = ln.Close()
 		delete(m.agents, workerID)
+	}
+	if ln, ok := m.cmds[workerID]; ok {
+		_ = ln.Close()
+		delete(m.cmds, workerID)
 	}
 	if c, ok := m.clients[workerID]; ok {
 		_ = c.Close()
@@ -211,8 +238,8 @@ func (m *PortMapper) CloseWorker(workerID string) {
 // agentRelaySock and pipes each connection to the host agent socket. Unlike a
 // bind-mounted socket this crosses the docker VM boundary, so it works on Colima,
 // Docker Desktop, OrbStack, and native Linux alike. Idempotent per worker.
-func (m *PortMapper) ForwardAgent(w *Worker, hostSock string) error {
-	if hostSock == "" {
+func (m *PortMapper) ForwardAgent(w *Worker) error {
+	if !m.dev.AgentAvailable() {
 		return nil
 	}
 	m.mu.Lock()
@@ -247,7 +274,7 @@ func (m *PortMapper) ForwardAgent(w *Worker, hostSock string) error {
 			}
 			go func() {
 				defer worker.Close()
-				host, err := net.Dial("unix", hostSock)
+				host, err := m.dev.DialAgent()
 				if err != nil {
 					ui.Info("ports", "agent relay dial host: %v", err)
 					return
@@ -261,6 +288,55 @@ func (m *PortMapper) ForwardAgent(w *Worker, hostSock string) error {
 		}
 	}()
 	ui.Info("ports", "ssh agent relayed into %s", w.ID)
+	return nil
+}
+
+// ForwardCmd exposes a unix socket inside the worker (cmdRelaySock) that the
+// container's CLI shims connect to; each connection is bridged to the active
+// device, which runs the requested (exposed) command. Mirrors ForwardAgent. The
+// command name + argv ride the cmdrelay header, so this stays a dumb pipe and the
+// device authorizes; it works for whichever device is active at accept time.
+// Idempotent per worker.
+func (m *PortMapper) ForwardCmd(w *Worker) error {
+	m.mu.Lock()
+	if _, ok := m.cmds[w.ID]; ok {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+	cl, err := m.client(w)
+	if err != nil {
+		return err
+	}
+	ln, err := cl.ListenUnix(cmdRelaySock)
+	if err != nil {
+		return fmt.Errorf("cmd relay listen in %s: %w", w.ID, err)
+	}
+	m.mu.Lock()
+	if _, ok := m.cmds[w.ID]; ok {
+		m.mu.Unlock()
+		_ = ln.Close()
+		return nil
+	}
+	m.cmds[w.ID] = ln
+	m.mu.Unlock()
+	go func() {
+		for {
+			worker, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer worker.Close()
+				dev, err := m.dev.DialCmd()
+				if err != nil {
+					return
+				}
+				bridgeConn(worker, dev)
+			}()
+		}
+	}()
+	ui.Info("ports", "command relay ready in %s", w.ID)
 	return nil
 }
 

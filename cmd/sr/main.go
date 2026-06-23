@@ -27,6 +27,10 @@ func main() {
 		cmdUp(args)
 	case "__daemon":
 		cmdDaemon(args)
+	case "serve":
+		cmdServe(args)
+	case "connect":
+		cmdConnect(args)
 	case "down":
 		cmdDown(args)
 	case "ls", "status":
@@ -54,6 +58,8 @@ func usage() {
 	fmt.Print(`sr — shellraiser coordinator
 
   sr [DIR]        ensure the coordinator, register DIR (default: cwd), open the UI
+  sr serve        run a headless coordinator (backend) with the device link enabled
+  sr connect URL  attach this machine as a device to a remote backend (host presence)
   sr ls           list registered projects
   sr stop  [id]   stop a worker (all if omitted)
   sr nuke   id    remove a worker container + its volume
@@ -64,6 +70,7 @@ func usage() {
 
 flags (for bare sr): --no-auth, --port <p>, --tailnet (expose UI on the tailnet),
                      --fg (run the coordinator in the foreground; live logs, Ctrl-C stops)
+flags (for sr serve): --no-auth, --port <p>, --tailnet, --device-addr <host:port>
 `)
 }
 
@@ -151,6 +158,83 @@ func cmdUp(args []string) {
 	url := fmt.Sprintf("http://127.0.0.1:%s/w/%s/", m.Port, id)
 	ui.Ready(url)
 	openBrowser(url)
+}
+
+// cmdServe runs a headless coordinator (the backend) in the foreground with the
+// device-link SSH server enabled — for a box that hosts the workers while you sit
+// at another machine running `sr connect`. No project is registered and no browser
+// opens; devices and `cd repo && sr` (on this box) populate it.
+func cmdServe(args []string) {
+	var noAuth, tailnet bool
+	port, deviceAddr := "", ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-auth":
+			noAuth = true
+		case "--tailnet":
+			tailnet = true
+		case "--port":
+			if i+1 < len(args) {
+				i++
+				port = args[i]
+			}
+		case "--device-addr":
+			if i+1 < len(args) {
+				i++
+				deviceAddr = args[i]
+			}
+		default:
+			fatal("unknown flag %q (try `sr help`)", args[i])
+		}
+	}
+	if tailnet && noAuth {
+		fatal("--no-auth cannot be combined with --tailnet")
+	}
+	dir, err := globalDir()
+	if err != nil {
+		fatal("%v", err)
+	}
+	// Ensure a device-link listen address: flag wins, else the configured value,
+	// else a stable default. Persist it so devices have a steady endpoint.
+	cfg, _ := loadHostConfig(dir)
+	if deviceAddr != "" {
+		cfg.DeviceLinkAddr = deviceAddr
+	} else if cfg.DeviceLinkAddr == "" {
+		cfg.DeviceLinkAddr = ":7722"
+	}
+	if err := saveHostConfig(dir, cfg); err != nil {
+		fatal("config: %v", err)
+	}
+	if port == "" {
+		port = resolveUIPort(dir)
+	}
+	if !dockerAlive() {
+		ui.Warn("sr", "docker is not running — workers can't start until it is")
+	}
+	ui.Boot("sr", "mode", "serve", "device-link", cfg.DeviceLinkAddr)
+	runDaemon(dir, port, noAuth, tailnet, "", "")
+}
+
+// cmdConnect attaches this machine to a remote backend as a device (host
+// presence): it binds forwarded worker ports locally, relays this machine's SSH
+// agent, and opens URLs — per the capabilities granted in device.toml.
+func cmdConnect(args []string) {
+	backendURL := ""
+	for i := 0; i < len(args); i++ {
+		if isFlag(args[i]) {
+			fatal("unknown flag %q (try `sr help`)", args[i])
+		}
+		if backendURL != "" {
+			fatal("usage: sr connect <backend-url>")
+		}
+		backendURL = args[i]
+	}
+	if backendURL == "" {
+		fatal("usage: sr connect <backend-url>")
+	}
+	if err := runConnect(backendURL); err != nil {
+		fatal("%v", err)
+	}
 }
 
 // cmdDaemon is the hidden detached-coordinator entrypoint (sr __daemon).

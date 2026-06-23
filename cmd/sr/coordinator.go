@@ -30,6 +30,9 @@ type Coordinator struct {
 	port    string
 	auth    *auth.Manager
 	act     *activity
+	dev     Device            // host-presence: where ports bind, the agent lives, URLs open
+	devlink *deviceLinkServer // device-link SSH server (nil unless device_link_addr set)
+	enroll  *enrollStore      // pending device enrollments
 	pm      *PortMapper
 	ports   *portStore
 	mu      sync.Mutex
@@ -41,7 +44,27 @@ type Coordinator struct {
 var dataPrefixes = []string{"/api/", "/ws/", "/p/", "/db", "/edit"}
 
 func newCoordinator(port string, am *auth.Manager) *Coordinator {
-	return &Coordinator{reg: newRegistry(), port: port, auth: am, act: newActivity(), proxies: map[string]*httputil.ReverseProxy{}}
+	return &Coordinator{reg: newRegistry(), port: port, auth: am, act: newActivity(), enroll: newEnrollStore(), proxies: map[string]*httputil.ReverseProxy{}}
+}
+
+// setDevice makes d the active host-presence device (a connecting remote device,
+// or localDevice). clearDevice reverts to the local device when d disconnects, but
+// only if d is still the active one (a newer device may have taken over).
+func (c *Coordinator) setDevice(d Device) {
+	c.mu.Lock()
+	c.dev = d
+	c.mu.Unlock()
+	c.pm.setDevice(d)
+}
+
+func (c *Coordinator) clearDevice(d Device) {
+	c.mu.Lock()
+	if c.dev == d {
+		c.dev = localDevice{}
+	}
+	cur := c.dev
+	c.mu.Unlock()
+	c.pm.setDevice(cur)
 }
 
 func (c *Coordinator) proxyFor(w *Worker) *httputil.ReverseProxy {
@@ -372,11 +395,18 @@ func (c *Coordinator) onWorkerUp(w *Worker) {
 	go c.autoMap(w)
 	if hostCfg.SSHPassthrough {
 		go func() {
-			if err := c.pm.ForwardAgent(w, hostAgentSocket()); err != nil {
+			if err := c.pm.ForwardAgent(w); err != nil {
 				ui.Info("sr", "agent relay %s: %v", w.ID, err)
 			}
 		}()
 	}
+	// Command relay (op/gh/…): always stood up; the active device decides which
+	// commands it exposes at invocation time (the in-worker shims connect lazily).
+	go func() {
+		if err := c.pm.ForwardCmd(w); err != nil {
+			ui.Info("sr", "command relay %s: %v", w.ID, err)
+		}
+	}()
 }
 
 // autoMap forwards the project's declared [[ports]] (from→to) plus any
@@ -436,6 +466,13 @@ func (c *Coordinator) httpHandler() http.Handler {
 	mux.HandleFunc("GET /api/workers/{id}/ports", c.handlePortList)
 	mux.HandleFunc("POST /api/workers/{id}/ports/{port}/{action}", c.handlePortMap)
 	mux.HandleFunc("POST /api/workers/{id}/{action}", c.handleWorkerAction)
+	// Device enrollment: start/status are device-facing (public, but a pending
+	// request does nothing until the authenticated owner approves); the page and
+	// approve are owner-only (gated).
+	mux.HandleFunc("POST /enroll/start", c.handleEnrollStart)
+	mux.HandleFunc("GET /enroll/status", c.handleEnrollStatus)
+	mux.HandleFunc("GET /enroll", c.handleEnrollPage)
+	mux.HandleFunc("POST /enroll/approve", c.handleEnrollApprove)
 	mux.HandleFunc("/w/{id}/", c.handleWorker)
 	mux.HandleFunc("/w/{id}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/w/"+r.PathValue("id")+"/", http.StatusFound)
@@ -512,6 +549,10 @@ func coordPublic(p string) bool {
 		return true
 	}
 	if strings.HasPrefix(p, "/api/auth/") {
+		return true
+	}
+	// Device-facing enrollment endpoints (the page + approve stay gated).
+	if p == "/enroll/start" || p == "/enroll/status" {
 		return true
 	}
 	// The project shell (deep link) is the public SPA; its data routes are gated.

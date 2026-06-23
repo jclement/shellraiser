@@ -125,6 +125,11 @@ func isBareMetal(project string) bool {
 // inside every worker (see PortMapper.ForwardAgent). SSH_AUTH_SOCK points here.
 const agentRelaySock = "/home/ubuntu/.config/shellraiser/ssh-agent.sock"
 
+// cmdRelaySock is where the coordinator exposes the command relay inside every
+// worker (see PortMapper.ForwardCmd). The container's CLI shims connect here;
+// SHELLRAISER_CMD_SOCK points at it.
+const cmdRelaySock = "/home/ubuntu/.config/shellraiser/cmd-relay.sock"
+
 func sshGitMounts() []string {
 	var out []string
 	home, _ := os.UserHomeDir()
@@ -278,6 +283,7 @@ func ensureWorker(id, project, image string) (*Worker, error) {
 		"-e", "SHELLRAISER_WORKER_TOKEN=" + w.Token,
 		"-e", "SHELLRAISER_SSH=1",
 		"-e", "SHELLRAISER_NO_AUTH=1", // coordinator owns passkey auth; token fences the port
+		"-e", "SHELLRAISER_CMD_SOCK=" + cmdRelaySock, // device command relay (op/gh/…)
 	}
 	if coordAuthKey != "" {
 		// The coordinator's pubkey → the worker's authorized_keys, so only the

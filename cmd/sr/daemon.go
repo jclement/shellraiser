@@ -115,9 +115,11 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 		tl = ts
 	}
 	co := newCoordinator(port, am)
-	co.pm = newPortMapper(signer, tl)
+	co.dev = localDevice{}
+	co.pm = newPortMapper(signer, co.dev, tl)
 	co.ports = newPortStore(dir)
-	co.reg.reconcile() // re-adopt any workers from a previous run
+	startDeviceLink(co, dir) // device-link SSH server (no-op unless device_link_addr is set)
+	co.reg.reconcile()       // re-adopt any workers from a previous run
 	for _, w := range co.reg.list() {
 		if w.State == "running" && w.APIPort != "" {
 			co.onWorkerUp(w) // re-forward ports + relay the agent for survivors
@@ -142,7 +144,7 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 		co.act.touch(id)
 		url := fmt.Sprintf("http://127.0.0.1:%s/w/%s/", port, id)
 		ui.Info("sr", "project %q ready (%s)", id, workerKind(w))
-		openBrowser(url)
+		_ = co.dev.OpenURL(url)
 		go func() {
 			sig := make(chan os.Signal, 2)
 			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
