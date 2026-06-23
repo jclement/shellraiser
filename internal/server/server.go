@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -138,6 +139,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
 	mux.HandleFunc("GET /api/ports", s.handlePorts)
 	mux.HandleFunc("POST /api/ssh/command", s.handleSSHCommand)
+	mux.HandleFunc("POST /api/upload", s.handleUpload)
 	mux.HandleFunc("POST /api/bridge", s.handleBridge)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /ws/term/{id}", s.handleTermWS)
@@ -512,6 +514,48 @@ func (s *Server) handleKillSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleUpload saves a pasted image to a temp file and returns its path, so the
+// UI can type that path into the terminal for an agent (e.g. claude) to read.
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 25<<20) // 25 MiB cap
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(data) == 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("empty upload"))
+		return
+	}
+	dir := filepath.Join(os.TempDir(), "shellraiser-uploads")
+	_ = os.MkdirAll(dir, 0o700)
+	f, err := os.CreateTemp(dir, "paste-*"+extForContentType(r.Header.Get("Content-Type")))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	_, err = f.Write(data)
+	_ = f.Close()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, map[string]string{"path": f.Name()})
+}
+
+func extForContentType(ct string) string {
+	switch {
+	case strings.Contains(ct, "jpeg"), strings.Contains(ct, "jpg"):
+		return ".jpg"
+	case strings.Contains(ct, "gif"):
+		return ".gif"
+	case strings.Contains(ct, "webp"):
+		return ".webp"
+	default:
+		return ".png"
+	}
 }
 
 func (s *Server) handlePorts(w http.ResponseWriter, r *http.Request) {

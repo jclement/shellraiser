@@ -663,6 +663,29 @@ function ensureTerm(s) {
   term.onResize(({ cols, rows }) => { if (rec.ws && rec.ws.readyState === 1) rec.ws.send(JSON.stringify({ type: 'resize', cols, rows })); });
   // Tap the terminal to (re)focus the hidden textarea → pops the soft keyboard.
   host.addEventListener('pointerup', () => { if (state.terms[state.active] === rec) focusActiveTerm(); });
+  // Paste an image → upload it to the worker and type its path into the terminal,
+  // so an agent (claude/codex) can read it. Plain-text paste falls through to xterm.
+  host.addEventListener('paste', (e) => {
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) {
+        e.preventDefault(); e.stopPropagation();
+        uploadImage(rec, it.getAsFile());
+        return;
+      }
+    }
+  }, true);
+}
+
+async function uploadImage(rec, blob) {
+  if (!blob) return;
+  try {
+    const res = await fetch(`${BASE}/api/upload`, { method: 'POST', headers: { 'content-type': blob.type || 'image/png' }, body: blob });
+    if (!res.ok) throw new Error('upload failed (' + res.status + ')');
+    const { path } = await res.json();
+    sendData(rec, path + ' '); // type the path at the agent's prompt
+    toast('Image pasted → ' + path, 'ok');
+  } catch (e) { toast('Image paste failed: ' + e.message); }
 }
 
 // ---- mobile keyboard ------------------------------------------------------
