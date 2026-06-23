@@ -782,6 +782,19 @@ async function killSession(id) {
   } else { renderTabs(); }
 }
 
+// closeFinishedTab removes a tab whose process exited cleanly (0): dispose the
+// terminal, drop the session locally + server-side, and re-render immediately.
+async function closeFinishedTab(id) {
+  disposeTerm(id);
+  state.sessions = state.sessions.filter((x) => x.id !== id);
+  try { await api('DELETE', `/api/sessions/${id}`); } catch (_) {}
+  if (state.active === id) {
+    const ids = tabsForSelected();
+    setActive(ids[ids.length - 1] || null);
+  } else { renderTabs(); }
+  renderWorktrees();
+}
+
 // ---- live status (SSE) + ding --------------------------------------------
 
 function connectEvents() {
@@ -793,6 +806,15 @@ function connectEvents() {
     // A worktree you're not currently looking at that just finished gets the
     // "attention" indicator until you select it.
     if (m.ding && s && s.cwd !== state.selected) state.unseen[s.cwd] = true;
+
+    // Process exited: a clean exit (0) closes the tab; a failure keeps it open
+    // and shows a terminated message so you can read the error.
+    if (m.state === 'exited') {
+      if (m.exitCode === 0) { closeFinishedTab(m.id); return; }
+      const rec = state.terms[m.id];
+      if (rec) rec.term.write(`\r\n\x1b[1;31m✖ process exited (code ${m.exitCode})\x1b[0m\r\n`);
+    }
+
     renderWorktrees();
     renderTabs();
     if (m.ding) { ding(); flashTitle(`✅ ${m.title} done`); }
