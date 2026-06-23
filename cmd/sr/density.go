@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jclement/slopbox/internal/ui"
+	"github.com/jclement/shellraiser/internal/ui"
 )
 
 // activity tracks the last time each worker was touched (a proxied request or a
@@ -53,7 +53,7 @@ func workerBusy(w *Worker) bool {
 	}
 	req, _ := http.NewRequest("GET", "http://127.0.0.1:"+w.APIPort+"/api/sessions", nil)
 	if w.Token != "" {
-		req.Header.Set("X-Slopbox-Worker", w.Token)
+		req.Header.Set("X-Shellraiser-Worker", w.Token)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -93,7 +93,7 @@ func (c *Coordinator) reapIdle() {
 			continue
 		}
 		if _, err := dockerRun("stop", w.Container); err == nil {
-			ui.Info("sb", "idle-stopped %s after %s", w.ID, grace)
+			ui.Info("sr", "idle-stopped %s after %s", w.ID, grace)
 			c.reg.adopt(w.ID)
 		}
 	}

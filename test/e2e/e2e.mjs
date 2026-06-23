@@ -1,4 +1,4 @@
-// slopbox end-to-end browser tests (Playwright).
+// shellraiser end-to-end browser tests (Playwright).
 // Driven by test/e2e/run.sh, which builds the binary, starts a --no-auth and an
 // auth-enabled instance, and passes their URLs + the bootstrap code via env.
 import { chromium } from 'playwright';
@@ -32,7 +32,7 @@ const browser = await chromium.launch();
   await page.waitForSelector('.xterm', { timeout: 8000 });
   await page.waitForTimeout(1500);
   const termText = await page.evaluate(() => {
-    const rec = Object.values(window.__slopbox.terms)[0];
+    const rec = Object.values(window.__shellraiser.terms)[0];
     if (!rec) return '';
     const buf = rec.term.buffer.active;
     let s = '';
@@ -77,7 +77,7 @@ for (const theme of ['light', 'dark']) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.addInitScript((t) => localStorage.setItem('slopbox-theme', t), theme);
+  await page.addInitScript((t) => localStorage.setItem('shellraiser-theme', t), theme);
   await page.goto(NOAUTH, { waitUntil: 'load' });
   await page.waitForSelector('#worktrees', { timeout: 8000 });
   check(`${theme} theme renders cleanly`, errors.length === 0, errors.slice(0, 1).join(''));

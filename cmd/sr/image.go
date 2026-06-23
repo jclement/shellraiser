@@ -10,14 +10,14 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/jclement/slopbox/cmd/sb/assets"
-	"github.com/jclement/slopbox/internal/config"
-	"github.com/jclement/slopbox/internal/ui"
+	"github.com/jclement/shellraiser/cmd/sr/assets"
+	"github.com/jclement/shellraiser/internal/config"
+	"github.com/jclement/shellraiser/internal/ui"
 )
 
-// baseImage is the default slopbox base (ubuntu + full toolchain), built once
-// and reused. Version-pinned so an sb upgrade rebuilds it.
-func baseImage() string { return "sb-base:" + version }
+// baseImage is the default shellraiser base (ubuntu + full toolchain), built once
+// and reused. Version-pinned so an sr upgrade rebuilds it.
+func baseImage() string { return "sr-base:" + version }
 
 // engineArch returns the docker ENGINE architecture (amd64/arm64) — not the host
 // arch, since Apple Silicon can run an emulated amd64 engine.
@@ -71,7 +71,7 @@ func resolveImage(project string) (string, error) {
 	h.Write(rendered.Bytes())
 	h.Write(entrypoint) // entrypoint ships in the overlay → must retrigger builds
 	h.Write(worker)
-	tag := "sb-" + hex.EncodeToString(h.Sum(nil))[:12]
+	tag := "sr-" + hex.EncodeToString(h.Sum(nil))[:12]
 
 	if imageExists(tag) {
 		return tag, nil
@@ -86,7 +86,7 @@ func resolveImage(project string) (string, error) {
 
 // resolveBase returns the base image reference for the overlay and whether the
 // overlay must add the lean must-haves (true for a user base, false for the
-// slopbox base which already has them).
+// shellraiser base which already has them).
 func resolveBase(project string, cfg config.Config) (string, bool, error) {
 	switch {
 	case cfg.Base != "":
@@ -105,7 +105,7 @@ func resolveBase(project string, cfg config.Config) (string, bool, error) {
 	}
 }
 
-// ensureBaseImage builds the default slopbox base from the embedded
+// ensureBaseImage builds the default shellraiser base from the embedded
 // base.Dockerfile if it is not already present.
 func ensureBaseImage() error {
 	if imageExists(baseImage()) {
@@ -138,7 +138,7 @@ func buildUserDockerfile(project, name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", name, err)
 	}
-	tag := "sb-userbase-" + hashShort(df)
+	tag := "sr-userbase-" + hashShort(df)
 	if imageExists(tag) {
 		return tag, nil
 	}
@@ -156,7 +156,7 @@ func buildUserDockerfile(project, name string) (string, error) {
 // overlay needs apt + useradd).
 func probeAptBase(base string) error {
 	if exec.Command("docker", "run", "--rm", base, "sh", "-c", "command -v apt-get >/dev/null").Run() != nil {
-		return fmt.Errorf("base %q has no apt-get — slopbox bases must be Debian/Ubuntu family", base)
+		return fmt.Errorf("base %q has no apt-get — shellraiser bases must be Debian/Ubuntu family", base)
 	}
 	return nil
 }
@@ -164,7 +164,7 @@ func probeAptBase(base string) error {
 // dockerBuild writes files into a temp context and runs `docker build`,
 // streaming progress to stdout (the daemon log).
 func dockerBuild(tag string, files map[string][]byte) error {
-	ctx, err := os.MkdirTemp("", "sb-build-")
+	ctx, err := os.MkdirTemp("", "sr-build-")
 	if err != nil {
 		return err
 	}

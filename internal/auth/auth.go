@@ -1,7 +1,7 @@
-// Package auth implements passkey (WebAuthn) authentication for slopbox.
+// Package auth implements passkey (WebAuthn) authentication for shellraiser.
 //
 // Model: a single box owner with one or more passkeys. Because a WebAuthn
-// credential is bound to one RP ID (registrable domain), and slopbox may be
+// credential is bound to one RP ID (registrable domain), and shellraiser may be
 // reached via localhost AND one or more tunnel hostnames, credentials are
 // stored *per RP ID*, discovered from the request Host at registration time.
 // Registering a passkey on a host where you have none requires the bootstrap
@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	sessionCookie  = "slopbox_session"
-	ceremonyCookie = "slopbox_cer"
+	sessionCookie  = "shellraiser_session"
+	ceremonyCookie = "shellraiser_cer"
 	sessionTTL     = 30 * 24 * time.Hour
 	ceremonyTTL    = 5 * time.Minute
 )
@@ -56,7 +56,7 @@ type ceremony struct {
 type Manager struct {
 	path       string
 	noAuth     bool
-	token      string                        // optional SLOPBOX_TOKEN fallback for automation
+	token      string                        // optional SHELLRAISER_TOKEN fallback for automation
 	rpOverride string                        // pinned RP ID (else discovered from Host)
 	Logf       func(format string, a ...any) // optional; for logging bootstrap rotation
 
@@ -158,7 +158,7 @@ func (m *Manager) Authenticated(r *http.Request) bool {
 	// it as a ?t= query param: that leaks the credential into access logs,
 	// Referer headers, and browser history.
 	if m.token != "" {
-		if t := r.Header.Get("X-Slopbox-Token"); t != "" && ctEq(t, m.token) {
+		if t := r.Header.Get("X-Shellraiser-Token"); t != "" && ctEq(t, m.token) {
 			return true
 		}
 	}
@@ -203,7 +203,7 @@ func (m *Manager) rp(r *http.Request) string {
 func (m *Manager) webauthnFor(r *http.Request) (*webauthn.WebAuthn, error) {
 	return webauthn.New(&webauthn.Config{
 		RPID:          m.rp(r),
-		RPDisplayName: "slopbox",
+		RPDisplayName: "shellraiser",
 		RPOrigins:     []string{origin(r)},
 	})
 }
@@ -240,8 +240,8 @@ type boxUser struct {
 }
 
 func (u *boxUser) WebAuthnID() []byte                         { return u.id }
-func (u *boxUser) WebAuthnName() string                       { return "slopbox" }
-func (u *boxUser) WebAuthnDisplayName() string                { return "slopbox owner" }
+func (u *boxUser) WebAuthnName() string                       { return "shellraiser" }
+func (u *boxUser) WebAuthnDisplayName() string                { return "shellraiser owner" }
 func (u *boxUser) WebAuthnCredentials() []webauthn.Credential { return u.creds }
 
 // --- ceremony storage ------------------------------------------------------

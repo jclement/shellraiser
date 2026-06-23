@@ -1,6 +1,6 @@
 name: build
 
-# Builds and publishes the slopbox image to GHCR.
+# Builds and publishes the shellraiser image to GHCR.
 #
 # Triggers:
 #   - push to main      -> publishes :edge (+ :sha)
@@ -17,7 +17,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}   # jclement/slopbox
+  IMAGE_NAME: ${{ github.repository }}   # jclement/shellraiser
 
 concurrency:
   group: build-${{ github.ref }}

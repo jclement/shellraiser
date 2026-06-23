@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/jclement/slopbox/internal/ui"
+	"github.com/jclement/shellraiser/internal/ui"
 )
 
 // isGitRepo reports whether dir is inside a git work tree.
@@ -20,7 +20,7 @@ func waitReady(w *Worker) {
 	for i := 0; i < 80; i++ {
 		req, _ := http.NewRequest("GET", "http://127.0.0.1:"+w.APIPort+"/api/info", nil)
 		if w.Token != "" {
-			req.Header.Set("X-Slopbox-Worker", w.Token)
+			req.Header.Set("X-Shellraiser-Worker", w.Token)
 		}
 		if resp, err := http.DefaultClient.Do(req); err == nil {
 			resp.Body.Close()
@@ -28,7 +28,7 @@ func waitReady(w *Worker) {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	ui.Warn("sb", "worker %s did not answer in time — continuing", w.Container)
+	ui.Warn("sr", "worker %s did not answer in time — continuing", w.Container)
 }
 
 // reconciledRegistry returns a registry populated from docker, for the
@@ -40,7 +40,7 @@ func reconciledRegistry() *Registry {
 }
 
 // cmdLs renders the status dashboard: coordinator header + a color-keyed row per
-// project. `sb` and `sb status` share it.
+// project. `sr` and `sr status` share it.
 func cmdLs(_ []string) {
 	if !dockerAlive() {
 		fatal("docker is not running")
@@ -54,7 +54,7 @@ func cmdLs(_ []string) {
 		coordLine = ui.Gray("coordinator  ") + ui.Green("● up") +
 			ui.Gray("   ui ") + ui.Cyan("http://127.0.0.1:"+m.Port+"/")
 	}
-	ui.Print("  " + ui.Accent("▟█▙ slopbox") + "  " + coordLine)
+	ui.Print("  " + ui.Accent("▟█▙ shellraiser") + "  " + coordLine)
 	img := ui.Green("✔")
 	if !imageExists(baseImage()) {
 		img = ui.Gray("not built yet")
@@ -64,7 +64,7 @@ func cmdLs(_ []string) {
 
 	workers := reconciledRegistry().list()
 	if len(workers) == 0 {
-		ui.Print("  " + ui.Gray("no projects registered — run `sb` in a git repo"))
+		ui.Print("  " + ui.Gray("no projects registered — run `sr` in a git repo"))
 		return
 	}
 	for _, w := range workers {
@@ -109,16 +109,16 @@ func cmdStop(args []string) {
 			continue
 		}
 		if _, err := dockerRun("stop", w.Container); err != nil {
-			ui.Warn("sb", "stop %s: %v", w.ID, err)
+			ui.Warn("sr", "stop %s: %v", w.ID, err)
 			continue
 		}
-		ui.Info("sb", "stopped %s", w.ID)
+		ui.Info("sr", "stopped %s", w.ID)
 	}
 }
 
 func cmdNuke(args []string) {
 	if len(args) == 0 {
-		fatal("usage: sb nuke <id>")
+		fatal("usage: sr nuke <id>")
 	}
 	if !dockerAlive() {
 		fatal("docker is not running")
@@ -132,12 +132,12 @@ func cmdNuke(args []string) {
 	_, _ = dockerRun("rm", "-f", w.Container)
 	_, _ = dockerRun("volume", "rm", w.Volume)
 	_ = exec.Command("docker", "network", "rm", w.Network).Run()
-	ui.Info("sb", "nuked %s (container + volume + network) — project source untouched", id)
+	ui.Info("sr", "nuked %s (container + volume + network) — project source untouched", id)
 }
 
 func cmdLogs(args []string) {
 	if len(args) == 0 {
-		fatal("usage: sb logs <id>")
+		fatal("usage: sr logs <id>")
 	}
 	c := containerName(args[0])
 	cmd := exec.Command("docker", "logs", "-f", "--tail", "100", c)
@@ -195,7 +195,7 @@ func cmdDoctor(_ []string) {
 	}
 	if dockerAlive() {
 		// No managed worker should sit on the default bridge (isolation invariant).
-		out, _ := dockerOut("ps", "--filter", "label=slopbox.role=worker",
+		out, _ := dockerOut("ps", "--filter", "label=shellraiser.role=worker",
 			"--filter", "network=bridge", "--format", "{{.Names}}")
 		check("network isolation", out == "", "no workers on the default bridge")
 		check("workers", true, fmt.Sprintf("%d registered", len(reconciledRegistry().list())))

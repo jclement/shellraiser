@@ -1,4 +1,4 @@
-# Sample slopbox config for a Node/TypeScript web app.
+# Sample shellraiser config for a Node/TypeScript web app.
 postgres = true   # pgweb at /db for the app's database
 code     = true   # code-server at /edit
 

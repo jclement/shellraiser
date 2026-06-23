@@ -1,4 +1,4 @@
-# Sample slopbox config for a Go service.
+# Sample shellraiser config for a Go service.
 postgres = true
 
 [[commands]]

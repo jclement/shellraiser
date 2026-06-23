@@ -1,4 +1,4 @@
-# slopbox — Design
+# shellraiser — Design
 
 A single Docker image for sandboxed "vibe coding." You point it at a project
 repo, run it, and get a **web** front end for managing git worktrees and the
@@ -8,7 +8,7 @@ container, not your machine, is the blast radius. The same browser UI works
 locally and, through a tunnel, from an iPad on the couch.
 
 > This replaces the earlier "Vibe Shell" host-side TUI design. The pivot:
-> instead of a cross-platform Go TUI multiplexed over SSH, slopbox is one
+> instead of a cross-platform Go TUI multiplexed over SSH, shellraiser is one
 > immutable container running a Go **web** app, with all state in bind mounts.
 > See [idea.md](idea.md) for the product brief and [STATUS.md](STATUS.md) for
 > what's implemented today.
@@ -37,7 +37,7 @@ locally and, through a tunnel, from an iPad on the couch.
 ## 2. Component map
 
 ```
-cmd/slopbox            entrypoint: flags/env → server.New → Run
+cmd/worker            entrypoint: flags/env → server.New → Run
 internal/server        HTTP API, websocket terminal bridge, SSE, auth, static
 internal/session       PTY-backed sessions, ring buffer, activity detection
 internal/worktree      thin wrapper over `git worktree`
@@ -57,7 +57,7 @@ Tailwind and xterm.js currently load from CDNs (see §11).
 ## 3. Process & terminal model
 
 The hard part of any multiplexer is hosting arbitrary interactive TUIs (Claude,
-vim, a shell) and rendering them to one or more attached clients. slopbox owns
+vim, a shell) and rendering them to one or more attached clients. shellraiser owns
 each process's **PTY** and bridges raw bytes to the browser's xterm.js — the
 same approach tmux and Zellij use (we own the PTY; we don't reparent).
 
@@ -81,9 +81,9 @@ Subscriber channels are buffered and **drop on overflow** rather than stall the
 process — a slow client degrades its own render, never the agent. (A future
 upgrade resyncs from the ring on overflow; see §11.)
 
-**Lifetime.** Sessions live in the slopbox process. They survive client
+**Lifetime.** Sessions live in the shellraiser process. They survive client
 disconnect/reconnect (ring + re-subscribe). They do **not** survive a restart of
-the slopbox process itself — the planned fix is tmux-backed sessions so a
+the shellraiser process itself — the planned fix is tmux-backed sessions so a
 process restart can re-attach. Today the container staying up *is* the
 persistence boundary.
 
@@ -152,7 +152,7 @@ narrow screens. xterm refits on resize. The iPad/phone case is first-class.
 
 ### 6.1 Storage
 Worktrees live under the persistent home mount
-(`/home/ubuntu/worktrees/<name>`, via `SLOPBOX_WORKTREES`), **not** inside the
+(`/home/ubuntu/worktrees/<name>`, via `SHELLRAISER_WORKTREES`), **not** inside the
 `/work` bind mount. This keeps the project checkout clean and lets worktrees
 persist with the rest of your state while still referencing the repo's `.git`
 at `/work`.
@@ -173,7 +173,7 @@ laptop is normal Docker `-p` publishing (or the tunnel); detection is discovery.
 ### 7.1 What's in the base image
 Ubuntu 24.04 + git, tmux, zsh, **starship**, vim, **helix**, **Fresh**
 (getfresh.dev), **mise**, Node, **Claude Code** + **Codex** (danger mode), a
-static **docker client**, and the slopbox binary. Built in two stages: a
+static **docker client**, and the shellraiser binary. Built in two stages: a
 `golang` stage cross-compiles the static binary for the target arch; the runtime
 stage installs tooling and copies the binary in.
 
@@ -198,7 +198,7 @@ session. uid 1000 keeps bind-mount ownership tidy on Linux hosts.
 ### 7.4 Layering summary
 | Layer | Mount | Mutable | Holds |
 |-------|-------|---------|-------|
-| Base image | — | no (CI rebuild) | OS, tools, agents, slopbox binary |
+| Base image | — | no (CI rebuild) | OS, tools, agents, shellraiser binary |
 | Home | `/home/ubuntu` | yes | mise/brew installs, logins, keys, worktrees |
 | Project | `/work` | yes | the repo + its `.git` |
 
@@ -213,19 +213,19 @@ logs). You use it once to register a passkey; after that you sign in with the
 passkey and can add more while signed in.
 
 **Per-origin RP IDs.** A WebAuthn credential is bound to one RP ID (registrable
-domain). slopbox is reachable via localhost *and* tunnel hostnames, so each
+domain). shellraiser is reachable via localhost *and* tunnel hostnames, so each
 credential is stored with the RP ID it was registered under, discovered from the
 request `Host`. Login offers only the credentials matching the current origin.
 `rp_id` pins a single registrable domain instead (e.g. an apex, to share one
 passkey across subdomains).
 
-`SLOPBOX_TOKEN` is an optional bearer-token fallback for automation; `--no-auth`
+`SHELLRAISER_TOKEN` is an optional bearer-token fallback for automation; `--no-auth`
 disables auth for trusted local/test use (it's what the Playwright suite drives).
 
 ### 8.2 Attack surface — minimal, default-deny
-- **One listener.** Only slopbox's port is published. pgweb (`:8081`) and
+- **One listener.** Only shellraiser's port is published. pgweb (`:8081`) and
   code-server (`:8082`) bind `127.0.0.1` *inside* the container — unreachable
-  except through slopbox's gated `/db` and `/edit` proxies.
+  except through shellraiser's gated `/db` and `/edit` proxies.
 - **Default-deny routing.** `publicPath` is a strict allowlist: only the login
   SPA shell (`/`, `/app.js`, `/favicon.ico`) and `/api/auth/*` are reachable
   unauthenticated. Every data API, the terminal websocket, and both proxies
@@ -263,11 +263,11 @@ from the host daemon is ever needed.
 - `Dockerfile` is multi-arch aware (`TARGETOS`/`TARGETARCH` cross-compile; static
   docker CLI selected by `uname -m`).
 - `.github/workflows/build.yml` builds **linux/amd64 + linux/arm64** (Apple
-  Silicon laptops, amd64 servers) and pushes to **ghcr.io/jclement/slopbox**:
+  Silicon laptops, amd64 servers) and pushes to **ghcr.io/jclement/shellraiser**:
   `:edge` on main, `:vX.Y.Z`/`:latest` on tags, plus a **weekly rebuild** so the
   base tooling (apt, mise, agents) stays fresh.
-- `run.sh` is the local dogfood path: build `slopbox:local`, run against a repo,
-  state under `~/.slopbox/<name>/home`, print the magic link.
+- `run.sh` is the local dogfood path: build `shellraiser:local`, run against a repo,
+  state under `~/.shellraiser/<name>/home`, print the magic link.
 
 ---
 
@@ -275,7 +275,7 @@ from the host daemon is ever needed.
 
 - **Tunnel binaries** — install cloudflared / gate-crash in the image so §8.2
   works out of the box.
-- **Session persistence across slopbox restarts** — back sessions with tmux.
+- **Session persistence across shellraiser restarts** — back sessions with tmux.
 - **Overflow resync** — on subscriber drop, replay the ring to resync xterm.
 - **Vendored assets** — embed Tailwind + xterm instead of CDN for an offline,
   CSP-tight image.

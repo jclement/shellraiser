@@ -1,4 +1,4 @@
-// Command slopbox serves the web UI for a single sandboxed vibe-coding box.
+// Command shellraiser serves the web UI for a single sandboxed vibe-coding box.
 package main
 
 import (
@@ -7,14 +7,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jclement/slopbox/internal/config"
-	"github.com/jclement/slopbox/internal/server"
+	"github.com/jclement/shellraiser/internal/config"
+	"github.com/jclement/shellraiser/internal/server"
 )
 
 func main() {
 	log.SetFlags(log.Ltime)
 
-	repo := flag.String("repo", envOr("SLOPBOX_REPO", ""), "project git repo (default: current dir)")
+	repo := flag.String("repo", envOr("SHELLRAISER_REPO", ""), "project git repo (default: current dir)")
 	addr := flag.String("addr", "", "listen address (overrides config)")
 	noAuth := flag.Bool("no-auth", false, "disable web UI authentication")
 	flag.Parse()
@@ -25,10 +25,10 @@ func main() {
 	}
 	repoDir, _ = filepath.Abs(repoDir)
 
-	// Layered config: defaults → .slopbox.toml → .slopbox.local.toml → env.
+	// Layered config: defaults → .shellraiser.toml → .shellraiser.local.toml → env.
 	cfg, err := config.Load(repoDir)
 	if err != nil {
-		log.Fatalf("slopbox: config: %v", err)
+		log.Fatalf("shellraiser: config: %v", err)
 	}
 	// Explicit flags win over everything.
 	if *addr != "" {
@@ -40,10 +40,10 @@ func main() {
 
 	srv, err := server.New(repoDir, cfg)
 	if err != nil {
-		log.Fatalf("slopbox: %v", err)
+		log.Fatalf("shellraiser: %v", err)
 	}
 	if err := srv.Run(); err != nil {
-		log.Fatalf("slopbox: %v", err)
+		log.Fatalf("shellraiser: %v", err)
 	}
 }
 

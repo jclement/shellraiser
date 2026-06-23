@@ -1,9 +1,9 @@
-// Package config loads slopbox settings with this precedence (highest first):
+// Package config loads shellraiser settings with this precedence (highest first):
 //
-//	environment variables  →  .slopbox.local.toml  →  .slopbox.toml  →  defaults
+//	environment variables  →  .shellraiser.local.toml  →  .shellraiser.toml  →  defaults
 //
 // Scalars follow that precedence. Custom session `commands` are defined ONLY in
-// the .slopbox files (env can't express them); the local file's commands merge
+// the .shellraiser files (env can't express them); the local file's commands merge
 // over the shared file's, matched by name.
 package config
 
@@ -35,12 +35,12 @@ type Config struct {
 	CodeServer   *bool  `toml:"code"`     // code-server at /edit; nil ⇒ default (enabled)
 
 	// v2: image base. base = an image ref ("node:20"); dockerfile = a path in the
-	// repo slopbox builds first. Mutually exclusive; empty ⇒ the slopbox base.
+	// repo shellraiser builds first. Mutually exclusive; empty ⇒ the shellraiser base.
 	Base           string `toml:"base"`
 	Dockerfile     string `toml:"dockerfile"`
 	IsolatedAgents bool   `toml:"isolated_agents"` // own agent-login volume (no sharing)
 
-	// Host port mappings published by slopbox.sh on start (e.g. ["5137",
+	// Host port mappings published by shellraiser.sh on start (e.g. ["5137",
 	// "4000-4010"]). For HTTP, prefer the /p/<port>/ proxy — no publishing needed.
 	Ports []string `toml:"ports"`
 
@@ -64,10 +64,10 @@ func (c Config) CodeServerEnabled() bool { return c.CodeServer == nil || *c.Code
 // Load reads defaults, then the two toml files from repoDir, then env vars.
 func Load(repoDir string) (Config, error) {
 	c := Config{Addr: ":7000"}
-	if err := mergeFile(&c, filepath.Join(repoDir, ".slopbox.toml")); err != nil {
+	if err := mergeFile(&c, filepath.Join(repoDir, ".shellraiser.toml")); err != nil {
 		return c, err
 	}
-	if err := mergeFile(&c, filepath.Join(repoDir, ".slopbox.local.toml")); err != nil {
+	if err := mergeFile(&c, filepath.Join(repoDir, ".shellraiser.local.toml")); err != nil {
 		return c, err
 	}
 	applyEnv(&c)
@@ -161,29 +161,29 @@ func mergeCommands(base, overrides []Command) []Command {
 }
 
 func applyEnv(c *Config) {
-	if v := os.Getenv("SLOPBOX_ADDR"); v != "" {
+	if v := os.Getenv("SHELLRAISER_ADDR"); v != "" {
 		c.Addr = v
 	}
-	if v := os.Getenv("SLOPBOX_WORKTREES"); v != "" {
+	if v := os.Getenv("SHELLRAISER_WORKTREES"); v != "" {
 		c.WorktreesDir = v
 	}
-	if v := os.Getenv("SLOPBOX_TOKEN"); v != "" {
+	if v := os.Getenv("SHELLRAISER_TOKEN"); v != "" {
 		c.Token = v
 	}
-	if v := os.Getenv("SLOP_ID"); v != "" {
+	if v := os.Getenv("SHELLRAISER_ID"); v != "" {
 		c.ID = v
 	}
-	if v := os.Getenv("SLOPBOX_RP_ID"); v != "" {
+	if v := os.Getenv("SHELLRAISER_RP_ID"); v != "" {
 		c.RPID = v
 	}
-	if v := os.Getenv("SLOPBOX_NO_AUTH"); v != "" {
+	if v := os.Getenv("SHELLRAISER_NO_AUTH"); v != "" {
 		c.NoAuth = v == "1" || v == "true"
 	}
-	if v := os.Getenv("SLOPBOX_POSTGRES"); v != "" {
+	if v := os.Getenv("SHELLRAISER_POSTGRES"); v != "" {
 		b := v == "1" || v == "true"
 		c.Postgres = &b
 	}
-	if v := os.Getenv("SLOPBOX_CODE_SERVER"); v != "" {
+	if v := os.Getenv("SHELLRAISER_CODE_SERVER"); v != "" {
 		b := v == "1" || v == "true"
 		c.CodeServer = &b
 	}

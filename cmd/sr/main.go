@@ -1,5 +1,5 @@
-// Command sb is the slopbox host coordinator (v2). One sb fronts many per-project
-// worker containers behind a single UI and port. Bare `sb` ensures the
+// Command sr is the shellraiser host coordinator (v2). One sr fronts many per-project
+// worker containers behind a single UI and port. Bare `sr` ensures the
 // coordinator is up, registers the current directory as a worker, and opens the
 // UI; subcommands manage the fleet.
 //
@@ -13,7 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jclement/slopbox/internal/ui"
+	"github.com/jclement/shellraiser/internal/ui"
 )
 
 func main() {
@@ -44,25 +44,25 @@ func main() {
 	case "help", "-h", "--help":
 		usage()
 	default:
-		fatal("unknown command %q (try `sb help`)", cmd)
+		fatal("unknown command %q (try `sr help`)", cmd)
 	}
 }
 
 func isFlag(s string) bool { return len(s) > 0 && s[0] == '-' }
 
 func usage() {
-	fmt.Print(`sb — slopbox coordinator
+	fmt.Print(`sr — shellraiser coordinator
 
-  sb [DIR]        ensure the coordinator, register DIR (default: cwd), open the UI
-  sb ls           list registered projects
-  sb stop  [id]   stop a worker (all if omitted)
-  sb nuke   id    remove a worker container + its volume
-  sb logs   id    stream a worker's container logs
-  sb login        log into claude/codex once (shared across projects)
-  sb doctor       preflight checks (docker, image, perms)
-  sb help         this message
+  sr [DIR]        ensure the coordinator, register DIR (default: cwd), open the UI
+  sr ls           list registered projects
+  sr stop  [id]   stop a worker (all if omitted)
+  sr nuke   id    remove a worker container + its volume
+  sr logs   id    stream a worker's container logs
+  sr login        log into claude/codex once (shared across projects)
+  sr doctor       preflight checks (docker, image, perms)
+  sr help         this message
 
-flags (for bare sb): --no-auth, --port <p>, --tailnet (expose UI on the tailnet)
+flags (for bare sr): --no-auth, --port <p>, --tailnet (expose UI on the tailnet)
 `)
 }
 
@@ -112,7 +112,7 @@ func cmdUp(args []string) {
 	// Build the worker image from embedded assets up-front so progress streams to
 	// THIS terminal (the first-run base build takes a few minutes); register then
 	// only has to start the container.
-	ui.Boot("sb", "project", boxID(project), "path", project)
+	ui.Boot("sr", "project", boxID(project), "path", project)
 	image, err := resolveImage(project)
 	if err != nil {
 		fatal("%v", err)
@@ -130,7 +130,7 @@ func cmdUp(args []string) {
 	openBrowser(url)
 }
 
-// cmdDaemon is the hidden detached-coordinator entrypoint (sb __daemon).
+// cmdDaemon is the hidden detached-coordinator entrypoint (sr __daemon).
 func cmdDaemon(args []string) {
 	port := "7700"
 	noAuth, tailnet := false, false
@@ -168,10 +168,10 @@ func cmdDown(_ []string) {
 	if m, ok := liveCoordinator(dir); ok {
 		_, _ = sockClient(m.Sock).Post("http://unix/shutdown", "application/json", nil)
 	}
-	ui.Info("sb", "all workers stopped; coordinator shut down")
+	ui.Info("sr", "all workers stopped; coordinator shut down")
 }
 
 func fatal(format string, a ...any) {
-	ui.Warn("sb", format, a...)
+	ui.Warn("sr", format, a...)
 	os.Exit(1)
 }

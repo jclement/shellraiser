@@ -1,10 +1,10 @@
-# build artifacts (the root binary only — NOT the cmd/slopbox source dir)
-/slopbox
+# build artifacts (the root binary only — NOT the cmd/worker source dir)
+/shellraiser
 *.test
 *.out
 
 # local dogfood state (run.sh)
-.slopbox/
+.shellraiser/
 
 # editor noise
 .DS_Store
@@ -15,4 +15,4 @@
 # e2e test deps
 test/e2e/node_modules/
 test/e2e/test-results/
-cmd/sb/assets/bin/worker-linux-*
+cmd/sr/assets/bin/worker-linux-*

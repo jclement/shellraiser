@@ -1,21 +1,21 @@
-# goreleaser config for the `sb` host binary — the single shippable artifact.
+# goreleaser config for the `sr` host binary — the single shippable artifact.
 # It embeds the Dockerfile assets + cross-compiled linux worker binaries, so the
 # before-hook cross-compiles those into the embed dir first.
 version: 2
 
-project_name: sb
+project_name: sr
 
 before:
   hooks:
     - go mod tidy
-    # Cross-compile the in-container worker binaries embedded into sb.
-    - sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o cmd/sb/assets/bin/worker-linux-amd64 ./cmd/slopbox'
-    - sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o cmd/sb/assets/bin/worker-linux-arm64 ./cmd/slopbox'
+    # Cross-compile the in-container worker binaries embedded into sr.
+    - sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o cmd/sr/assets/bin/worker-linux-amd64 ./cmd/worker'
+    - sh -c 'CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o cmd/sr/assets/bin/worker-linux-arm64 ./cmd/worker'
 
 builds:
-  - id: sb
-    main: ./cmd/sb
-    binary: sb
+  - id: sr
+    main: ./cmd/sr
+    binary: sr
     env:
       - CGO_ENABLED=0
     goos: [linux, darwin] # windows ships via WSL2 (the linux binary)
@@ -25,7 +25,7 @@ builds:
       - -s -w -X main.version={{ .Version }}
 
 archives:
-  - id: sb
+  - id: sr
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
@@ -36,17 +36,17 @@ snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
 
 brews:
-  - name: sb
+  - name: sr
     repository:
       owner: jclement
       name: homebrew-tap
-    homepage: "https://github.com/jclement/slopbox"
+    homepage: "https://github.com/jclement/shellraiser"
     description: "Sandboxed vibe-coding coordinator — one UI for many per-project worker containers"
     license: "MIT"
     dependencies:
       - name: docker
         type: optional
     install: |
-      bin.install "sb"
+      bin.install "sr"
     test: |
-      system "#{bin}/sb", "help"
+      system "#{bin}/sr", "help"

@@ -17,15 +17,15 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/jclement/slopbox/internal/auth"
-	"github.com/jclement/slopbox/internal/config"
-	"github.com/jclement/slopbox/internal/session"
-	"github.com/jclement/slopbox/internal/ui"
-	"github.com/jclement/slopbox/internal/worktree"
-	"github.com/jclement/slopbox/web"
+	"github.com/jclement/shellraiser/internal/auth"
+	"github.com/jclement/shellraiser/internal/config"
+	"github.com/jclement/shellraiser/internal/session"
+	"github.com/jclement/shellraiser/internal/ui"
+	"github.com/jclement/shellraiser/internal/worktree"
+	"github.com/jclement/shellraiser/web"
 )
 
-// Server is the slopbox HTTP server.
+// Server is the shellraiser HTTP server.
 type Server struct {
 	repoDir      string
 	worktreesDir string
@@ -78,7 +78,7 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 	if home == "" {
 		home = repoDir
 	}
-	authDir := filepath.Join(home, ".local", "share", "slopbox")
+	authDir := filepath.Join(home, ".local", "share", "shellraiser")
 	_ = os.MkdirAll(authDir, 0o700)
 	am, err := auth.New(filepath.Join(authDir, "auth.json"), cfg.Token, cfg.RPID, cfg.NoAuth)
 	if err != nil {
@@ -157,7 +157,7 @@ func (s *Server) Run() error {
 		})
 	}
 
-	// Reach an internal dev-server port through slopbox at /p/<port>/ — proxies
+	// Reach an internal dev-server port through shellraiser at /p/<port>/ — proxies
 	// to 127.0.0.1:<port> inside the container (so it works even for loopback-
 	// bound servers), behind the same auth, no docker -p needed. Subpath caveat:
 	// SPAs with absolute asset paths need their base set to /p/<port>/.
@@ -170,7 +170,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/", s.handleStatic)
 
 	ui.Banner()
-	ui.Boot("slopbox",
+	ui.Boot("shellraiser",
 		"repo", filepath.Base(s.repoDir),
 		"worktrees", s.worktreesDir,
 		"postgres", fmt.Sprintf("%v", s.cfg.PostgresEnabled()),
@@ -186,15 +186,15 @@ func (s *Server) Run() error {
 // /api/auth/* endpoints public (the SPA gates itself via /api/auth/status).
 //
 // In v2 the worker is an untrusted backend reached only through the coordinator.
-// When SLOPBOX_WORKER_TOKEN is set, EVERY request (static included) must carry
-// the matching X-Slopbox-Worker header — loopback binding is not authentication
+// When SHELLRAISER_WORKER_TOKEN is set, EVERY request (static included) must carry
+// the matching X-Shellraiser-Worker header — loopback binding is not authentication
 // on a shared host, so this fences out any other local process. The coordinator
 // injects the header on every proxied hop.
 func (s *Server) gate(next http.Handler) http.Handler {
-	workerToken := os.Getenv("SLOPBOX_WORKER_TOKEN")
+	workerToken := os.Getenv("SHELLRAISER_WORKER_TOKEN")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if workerToken != "" &&
-			subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Slopbox-Worker")), []byte(workerToken)) != 1 {
+			subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Shellraiser-Worker")), []byte(workerToken)) != 1 {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -268,7 +268,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"worktreesDir": s.worktreesDir,
 		"postgres":     s.cfg.PostgresEnabled(),
 		"editor":       s.cfg.CodeServerEnabled(),
-		"ssh":          os.Getenv("SLOPBOX_SSH") == "1",
+		"ssh":          os.Getenv("SHELLRAISER_SSH") == "1",
 	})
 }
 
@@ -417,7 +417,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Cwd     string   `json:"cwd"`
 		Title   string   `json:"title"`
 		Args    []string `json:"args"`
-		Command string   `json:"command"` // name of a custom command from .slopbox.toml
+		Command string   `json:"command"` // name of a custom command from .shellraiser.toml
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)

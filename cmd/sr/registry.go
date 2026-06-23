@@ -51,8 +51,8 @@ func (r *Registry) list() []*Worker {
 // live ports/state and dropping registry entries whose container is gone.
 func (r *Registry) reconcile() {
 	out, err := dockerOut("ps", "-a",
-		"--filter", "label=slopbox.role=worker",
-		"--format", "{{.Label \"slopbox.id\"}}")
+		"--filter", "label=shellraiser.role=worker",
+		"--format", "{{.Label \"shellraiser.id\"}}")
 	live := map[string]bool{}
 	if err == nil {
 		for _, id := range strings.Fields(out) {
@@ -70,7 +70,7 @@ func (r *Registry) reconcile() {
 // adopt (re)reads a single container's facts into the registry.
 func (r *Registry) adopt(id string) {
 	c := containerName(id)
-	project, _ := dockerOut("inspect", "-f", "{{index .Config.Labels \"slopbox.project\"}}", c)
+	project, _ := dockerOut("inspect", "-f", "{{index .Config.Labels \"shellraiser.project\"}}", c)
 	w := &Worker{
 		ID:        id,
 		Project:   project,
@@ -78,7 +78,7 @@ func (r *Registry) adopt(id string) {
 		Container: c,
 		Network:   networkName(id),
 		Volume:    volumeName(id),
-		Token:     containerEnv(c, "SLOPBOX_WORKER_TOKEN"),
+		Token:     containerEnv(c, "SHELLRAISER_WORKER_TOKEN"),
 		State:     containerState(c),
 	}
 	if w.State == "running" {

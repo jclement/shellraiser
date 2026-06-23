@@ -1,4 +1,4 @@
-# Sample slopbox config for a Python service.
+# Sample shellraiser config for a Python service.
 postgres = true
 
 [[commands]]

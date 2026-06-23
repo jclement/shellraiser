@@ -1,4 +1,4 @@
-# slopbox default zsh config (seeded into the persistent home on first run).
+# shellraiser default zsh config (seeded into the persistent home on first run).
 # Safe to edit — your changes persist in the home mount.
 
 export EDITOR=hx

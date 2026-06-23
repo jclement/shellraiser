@@ -1,4 +1,4 @@
-// Package worktree wraps the handful of git-worktree operations slopbox needs.
+// Package worktree wraps the handful of git-worktree operations shellraiser needs.
 package worktree
 
 import (
@@ -195,7 +195,7 @@ func Branches(repoDir string) []string {
 }
 
 // RemoteName returns a human repo name from the origin remote URL (e.g.
-// "git@host:org/slopbox.git" -> "slopbox"), or "" if there's no remote. Used so
+// "git@host:org/shellraiser.git" -> "shellraiser"), or "" if there's no remote. Used so
 // the header shows the project, not the mount path basename ("work").
 func RemoteName(repoDir string) string {
 	out, err := git(repoDir, "remote", "get-url", "origin")

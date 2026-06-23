@@ -1,11 +1,11 @@
-<h1 align="center">📦 slopbox</h1>
+<h1 align="center">📦 shellraiser</h1>
 
 <p align="center">
-  A single host binary — <code>sb</code> — that fronts many per-project sandbox
+  A single host binary — <code>sr</code> — that fronts many per-project sandbox
   containers behind <strong>one UI and one port</strong>. <code>cd</code> into a
-  repo, run <code>sb</code>, and manage git worktrees plus the coding agents
+  repo, run <code>sr</code>, and manage git worktrees plus the coding agents
   (Claude Code, Codex), shells, and editors running on them. <code>cd</code> into
-  another repo, run <code>sb</code> again — it joins the same coordinator.
+  another repo, run <code>sr</code> again — it joins the same coordinator.
 </p>
 
 <p align="center">
@@ -26,33 +26,33 @@
 ## Quickstart
 
 ```bash
-# one-time: build sb (cross-compiles + embeds the linux worker binaries)
-mise run build         # → dist/sb     (or: brew install jclement/tap/sb)
+# one-time: build sr (cross-compiles + embeds the linux worker binaries)
+mise run build         # → dist/sr     (or: brew install jclement/tap/sr)
 
-cd ~/dev/project-a && sb        # builds the image on first run, opens the UI
-cd ~/dev/project-b && sb        # joins the SAME coordinator — one UI, one port
+cd ~/dev/project-a && sr        # builds the image on first run, opens the UI
+cd ~/dev/project-b && sr        # joins the SAME coordinator — one UI, one port
 ```
 
-The first `sb` builds the worker image locally from assets embedded in the binary
+The first `sr` builds the worker image locally from assets embedded in the binary
 (no registry), starts a detached **coordinator** on `http://localhost:7700`,
 registers the current repo as a **worker** container, and opens your browser.
-Every later `sb` in any repo attaches to that one coordinator.
+Every later `sr` in any repo attaches to that one coordinator.
 
 There is nothing to install in the image and nothing to `.gitignore` in your repo
-— the only project file is an optional committed `.slopbox.toml`.
+— the only project file is an optional committed `.shellraiser.toml`.
 
 ## Commands
 
 ```bash
-sb                # ensure the coordinator, register cwd, open the UI
-sb --no-auth      # …without passkey auth (loopback-only; refused with --tailnet)
-sb ls   / status  # color dashboard: coordinator + every project + ports
-sb stop [id]      # stop a worker (all if omitted) — data kept
-sb nuke  id       # remove a worker's container + volume + network (repo untouched)
-sb logs  id       # follow a worker's container logs
-sb login          # log into claude/codex once, shared across projects
-sb down           # stop every worker and shut the coordinator down
-sb doctor         # preflight: docker, embedded worker, base image, isolation
+sr                # ensure the coordinator, register cwd, open the UI
+sr --no-auth      # …without passkey auth (loopback-only; refused with --tailnet)
+sr ls   / status  # color dashboard: coordinator + every project + ports
+sr stop [id]      # stop a worker (all if omitted) — data kept
+sr nuke  id       # remove a worker's container + volume + network (repo untouched)
+sr logs  id       # follow a worker's container logs
+sr login          # log into claude/codex once, shared across projects
+sr down           # stop every worker and shut the coordinator down
+sr doctor         # preflight: docker, embedded worker, base image, isolation
 ```
 
 Workers **idle-stop** after 30 minutes with no running session and **wake on the
@@ -60,12 +60,12 @@ next request**, so a dozen registered projects cost almost nothing at rest.
 
 ## Configuration
 
-A committed, optional `.slopbox.toml` in the repo describes the **worker**:
+A committed, optional `.shellraiser.toml` in the repo describes the **worker**:
 
 ```toml
-id        = "myproj"          # identity (else the folder name); container = sb_<id>
+id        = "myproj"          # identity (else the folder name); container = sr_<id>
 base      = "node:20"         # bring your own base image (Debian/Ubuntu family)…
-# dockerfile = "Dockerfile.dev"  # …or have slopbox build yours first, then layer on top
+# dockerfile = "Dockerfile.dev"  # …or have shellraiser build yours first, then layer on top
 postgres  = true              # opt in to postgres + the /db UI (default: off)
 code      = true              # code-server at /edit (default: on, lazy-installed)
 ports     = ["5173", "8000-8010"]   # auto-map these to host loopback on start
@@ -77,7 +77,7 @@ args = ["npm", "run", "dev"]
 ```
 
 Host-wide knobs (UI port, auth) are flags/global config, not per-project. The
-default base is slopbox's own image (Ubuntu + zsh/starship, mise, helix, node,
+default base is shellraiser's own image (Ubuntu + zsh/starship, mise, helix, node,
 the agents, postgres, tailscale); a custom `base`/`dockerfile` gets a lean
 overlay (the worker binary, git, sshd, sudo, an `ubuntu` user) on top.
 
@@ -93,13 +93,13 @@ reachable through the in-UI `/p/<port>/` proxy (handy on an iPad).
 ## How it works
 
 ```
- browser ─▶ sb (coordinator, host binary, one port, one passkey login)
-              • builds sb-<hash> images locally from embedded assets
+ browser ─▶ sr (coordinator, host binary, one port, one passkey login)
+              • builds sr-<hash> images locally from embedded assets
               • reverse-proxies each worker under /w/<id>/ (token-injected)
               • SSH -L port-mapper · idle reaper · docker-label registry
                    │ api+ws            │ ssh -L
                    ▼                   ▼
-        ┌ sb_project-a ┐     ┌ sb_project-b ┐   worker containers:
+        ┌ sr_project-a ┐     ┌ sr_project-b ┐   worker containers:
         │ worker API   │     │ worker API   │   today's app as a headless
         │ PTY sessions │     │ PTY sessions │   backend — own network,
         │ /p/ · sshd   │     │ /p/ · sshd   │   own volume, loopback-only
@@ -118,16 +118,16 @@ data loss. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
   network (no sibling reachability), `--memory`/`--pids` caps, a loopback-only API
   fenced by a per-worker token, and a hardened sshd (`AllowTcpForwarding local`,
   no agent/gateway/tunnel forwarding).
-- **Secrets stay host-side** in `~/.config/sbox` (0700): passkey store, the
+- **Secrets stay host-side** in `~/.config/shellraiser` (0700): passkey store, the
   coordinator SSH key, the worker registry. The shared agent-login volume is
-  mounted **read-only** into workers; only `sb login` writes it.
+  mounted **read-only** into workers; only `sr login` writes it.
 - The docker socket is never mounted by default (it's a host-takeover grant under
   a hostile agent).
 
 ## Development
 
 ```bash
-mise run build     # cross-compile workers + build dist/sb
+mise run build     # cross-compile workers + build dist/sr
 mise run test      # go unit tests
 mise run e2e       # Playwright end-to-end (worker UI + multi-project coordinator)
 ```

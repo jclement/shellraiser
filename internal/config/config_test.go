@@ -15,7 +15,7 @@ func write(t *testing.T, dir, name, body string) {
 
 func TestPrecedenceAndCommandMerge(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, ".slopbox.toml", `
+	write(t, dir, ".shellraiser.toml", `
 addr = ":7000"
 postgres = true
 [[commands]]
@@ -25,7 +25,7 @@ args = ["shared-dev"]
 name = "test"
 args = ["shared-test"]
 `)
-	write(t, dir, ".slopbox.local.toml", `
+	write(t, dir, ".shellraiser.local.toml", `
 addr = ":8000"
 [[commands]]
 name = "dev"
@@ -35,8 +35,8 @@ name = "lint"
 args = ["local-lint"]
 `)
 
-	t.Setenv("SLOPBOX_ADDR", ":9000")
-	t.Setenv("SLOPBOX_POSTGRES", "0")
+	t.Setenv("SHELLRAISER_ADDR", ":9000")
+	t.Setenv("SHELLRAISER_POSTGRES", "0")
 
 	c, err := Load(dir)
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jclement/slopbox/internal/ui"
+	"github.com/jclement/shellraiser/internal/ui"
 	"golang.org/x/crypto/ssh"
 )
 

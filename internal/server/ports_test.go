@@ -19,10 +19,10 @@ func TestPortFromAddr(t *testing.T) {
 }
 
 func TestProcFromSS(t *testing.T) {
-	line := `LISTEN 0 4096 0.0.0.0:7000 0.0.0.0:* users:(("slopbox",pid=42,fd=7))`
+	line := `LISTEN 0 4096 0.0.0.0:7000 0.0.0.0:* users:(("shellraiser",pid=42,fd=7))`
 	name, pid := procFromSS(line)
-	if name != "slopbox" || pid != 42 {
-		t.Errorf("procFromSS = (%q, %d), want (slopbox, 42)", name, pid)
+	if name != "shellraiser" || pid != 42 {
+		t.Errorf("procFromSS = (%q, %d), want (shellraiser, 42)", name, pid)
 	}
 	if n, p := procFromSS("LISTEN 0 128 *:22 *:*"); n != "" || p != 0 {
 		t.Errorf("procFromSS(no proc) = (%q, %d), want empty", n, p)

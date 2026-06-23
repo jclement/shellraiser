@@ -1,23 +1,23 @@
-# sbox — architecture (v2: coordinator + workers)
+# shellraiser — architecture (v2: coordinator + workers)
 
-A rethink of slopbox: instead of one box = one container = one UI/port, a single
-host **coordinator** (`sb`) fronts many per-project **worker** containers behind
+A rethink of shellraiser: instead of one box = one container = one UI/port, a single
+host **coordinator** (`sr`) fronts many per-project **worker** containers behind
 **one UI and one port**.
 
 ```
             ┌─────────────────────── your machine ───────────────────────┐
             │                                                             │
-   browser ─┼─▶ sb (coordinator, host binary)                            │
+   browser ─┼─▶ sr (coordinator, host binary)                            │
  tailnet ───┼─▶   • one UI (unified: all projects/worktrees/sessions)     │
             │     • one passkey auth (enforced before every proxy hop)    │
-            │     • builds sb-<hash> image from embedded Dockerfile        │
+            │     • builds sr-<hash> image from embedded Dockerfile        │
             │     • per-project worker lifecycle + resource caps           │
             │     • dynamic port mapping (host/tailnet ⇄ worker, via SSH) │
             │     • optional Tailscale via tsnet (no host tailscale)      │
             │        │            │                                       │
             │   proxy│api+ws  ssh │-L tunnels                             │
             │        ▼            ▼                                       │
-            │   ┌─ sb_p1 ───────┐  ┌─ sb_p2 ───────┐   (worker containers)│
+            │   ┌─ sr_p1 ───────┐  ┌─ sr_p2 ───────┐   (worker containers)│
             │   │ worker API    │  │ worker API    │   = today's app,     │
             │   │ PTY sessions  │  │ PTY sessions  │     headless backend │
             │   │ /p/ proxy     │  │ /p/ proxy     │   own docker network │
@@ -35,15 +35,15 @@ teams: *the bones are right; the work is hardening + lifecycle, not redesign.*
 
 ## The two binaries
 
-**`sb` — host binary** (mac/linux × amd64/arm64; Windows via WSL2; Homebrew;
+**`sr` — host binary** (mac/linux × amd64/arm64; Windows via WSL2; Homebrew;
 versioned). One static pure-Go binary that **embeds**: the Dockerfile template,
 both linux worker binaries (amd64+arm64), the entrypoint, and the web UI assets.
 Runs as the normal host user, never root. Responsibilities:
 
-- **CLI** (muscle-memory verbs): bare `sb` (ensure coordinator + register cwd +
-  open UI), `sb --no-auth`, plus `sb ls`/`status`, `sb sh`/`ish`, `sb stop`,
-  `sb nuke`, `sb logs`, `sb down`, `sb doctor`, `sb login`, `sb rebuild`.
-- **Image**: build the `sb-<hash>` image locally from embedded assets if missing —
+- **CLI** (muscle-memory verbs): bare `sr` (ensure coordinator + register cwd +
+  open UI), `sr --no-auth`, plus `sr ls`/`status`, `sr sh`/`ish`, `sr stop`,
+  `sr nuke`, `sr logs`, `sr down`, `sr doctor`, `sr login`, `sr rebuild`.
+- **Image**: build the `sr-<hash>` image locally from embedded assets if missing —
   no registry. (`§ Image build`.)
 - **Coordinator daemon**: serve the unified UI on **one** port; reverse-proxy each
   worker under `/w/<id>/…`; aggregate into one view; own lifecycle, port-mapping,
@@ -51,7 +51,7 @@ Runs as the normal host user, never root. Responsibilities:
 
 **Worker — container** = today's app, demoted to an untrusted headless backend
 (API + PTY + `/p/` + lazy code-server/postgres). UI and auth move to the
-coordinator. One container `sb_<id>` + one named volume `sb_<id>_vol` per project.
+coordinator. One container `sr_<id>` + one named volume `sr_<id>_vol` per project.
 Publishes **nothing public** — only `127.0.0.1:0:7000` (API) and `127.0.0.1:0:22`
 (sshd), both loopback, both ephemeral host ports discovered via `docker inspect`.
 
@@ -75,7 +75,7 @@ metaStore colors. New code is the host coordinator.
    WS upgrade — with `<id>` validated against the registry. Workers never serve a
    public origin.
 4. **Docker is the source of truth.** The registry is reconciled from `docker ps`
-   by `slopbox.*` labels on boot + timer; `registry.json` is a flock-guarded hint
+   by `shellraiser.*` labels on boot + timer; `registry.json` is a flock-guarded hint
    cache, not authoritative. A coordinator crash / `brew upgrade` re-adopts running
    workers with zero data loss.
 5. **Workers are untrusted** (danger-mode agents = container-root). The boundary is
@@ -89,13 +89,13 @@ Locked by the user earlier:
 - **Unified UI.** One sidebar: projects → worktrees → sessions; one cross-project
   view. All calls go to `/w/<id>/api/…` and `/w/<id>/ws/…`.
 - **Shared agent logins, opt-out per project** via `isolated_agents = true`.
-- **Auto port mapping** for `.slopbox.toml` `ports`; discovered ports get a UI
+- **Auto port mapping** for `.shellraiser.toml` `ports`; discovered ports get a UI
   toggle. Bound to localhost and/or tailnet.
-- **No registry / no published image.** GHA only goreleases `sb` → Homebrew.
-- **Global state in `~/.config/sbox`** (`os.UserConfigDir()`; mac:
-  `~/Library/Application Support/sbox`). The *only* per-project file is an optional
-  committed `.slopbox.toml` — no gitignore sprawl.
-- **Minimal surface:** `sb`, `sb --no-auth`; config via files, not env vars.
+- **No registry / no published image.** GHA only goreleases `sr` → Homebrew.
+- **Global state in `~/.config/shellraiser`** (`os.UserConfigDir()`; mac:
+  `~/Library/Application Support/shellraiser`). The *only* per-project file is an optional
+  committed `.shellraiser.toml` — no gitignore sprawl.
+- **Minimal surface:** `sr`, `sr --no-auth`; config via files, not env vars.
 
 Adopted defaults (the 7 synthesis forks — recommended options taken, overridable):
 1. **`isolated_agents`** stays **shared-by-default** (convenience); UI toggle is
@@ -104,23 +104,23 @@ Adopted defaults (the 7 synthesis forks — recommended options taken, overridab
    in migration.)*
 3. **Idle auto-stop ON at 30m** grace, `keep_warm` opt-out; never reaps an active
    session/forward; resume 1–3s.
-4. **Worker fate on `sb down`/coordinator exit: keep running** (instant re-adopt);
-   `sb down` explicitly stops all.
+4. **Worker fate on `sr down`/coordinator exit: keep running** (instant re-adopt);
+   `sr down` explicitly stops all.
 5. **Tailnet trust:** passkey **always required**, even on tailnet; refuse
    `--no-auth` + tailnet together. Tailscale identity is a second factor, not a
    replacement.
 6. **Apple Silicon default arch: native arm64**, per-project override for parity.
 7. **Reboot survival:** double-fork (survives terminal close) is default;
-   `sb service install` opt-in for a launchd/systemd unit.
+   `sr service install` opt-in for a launchd/systemd unit.
 
 ---
 
 ## Security hardening (ship-blockers before any multi-worker phase hits a tailnet)
 
-- **Per-worker docker network** `sb_net_<id>` (not the default bridge) so a
-  danger-mode worker can't port-scan siblings. `sb doctor` asserts nothing is on
+- **Per-worker docker network** `sr_net_<id>` (not the default bridge) so a
+  danger-mode worker can't port-scan siblings. `sr doctor` asserts nothing is on
   the default bridge.
-- **Worker API token.** Coordinator injects `SLOPBOX_WORKER_TOKEN` (32 random
+- **Worker API token.** Coordinator injects `SHELLRAISER_WORKER_TOKEN` (32 random
   bytes, regenerated per start); worker rejects any request lacking it. Loopback is
   not auth on a multi-process host.
 - **Hardened worker sshd**: `AllowTcpForwarding local`, `PermitOpen 127.0.0.1:*
@@ -128,7 +128,7 @@ Adopted defaults (the 7 synthesis forks — recommended options taken, overridab
   Coordinator uses only `-L`, never `-R`. One coordinator keypair in the global dir
   (0600), pubkey injected per worker.
 - **Resource caps** on every `docker run`: `--memory=2g --pids-limit=512
-  --cpu-shares=1024` (overridable in `.slopbox.toml`). Inspect `State.OOMKilled`.
+  --cpu-shares=1024` (overridable in `.shellraiser.toml`). Inspect `State.OOMKilled`.
 - **Reserved-port denylist** (5432/8081/8082/7000/22): `/p/` and the port-mapper
   refuse them; postgres/pgweb/code-server hard-blocked from tailnet exposure.
 - **Docker socket** off by default; gated per-project (`docker_socket = true`) with
@@ -141,12 +141,12 @@ Adopted defaults (the 7 synthesis forks — recommended options taken, overridab
 
 ## Custom base image (bring your own environment)
 
-The embedded Dockerfile is a **template**: `FROM {{base}}` + a lean slopbox
-overlay. A project picks its own environment; slopbox augments it.
+The embedded Dockerfile is a **template**: `FROM {{base}}` + a lean shellraiser
+overlay. A project picks its own environment; shellraiser augments it.
 
-- `.slopbox.toml`: `base = "node:20"` (use an image) **or** `dockerfile =
-  "Dockerfile.dev"` (slopbox builds it first, then layers on top). Mutually
-  exclusive. Default base = slopbox's own `ubuntu:24.04` + full tooling.
+- `.shellraiser.toml`: `base = "node:20"` (use an image) **or** `dockerfile =
+  "Dockerfile.dev"` (shellraiser builds it first, then layers on top). Mutually
+  exclusive. Default base = shellraiser's own `ubuntu:24.04` + full tooling.
 - **Overlay must-haves** (always baked, ~6 pkgs / 50–80MB): worker binary,
   entrypoint, `ubuntu` user + sudo, `git` (+ `safe.directory '*'`),
   `openssh-server`, `ca-certificates`, `curl`, `gosu`. COPY the worker binary
@@ -160,12 +160,12 @@ overlay. A project picks its own environment; slopbox augments it.
 ## Image build
 
 Stop building the worker binary in Docker. Cross-compile linux amd64+arm64 at
-release, `go:embed` both + template + entrypoint into `sb`; at runtime materialize
+release, `go:embed` both + template + entrypoint into `sr`; at runtime materialize
 a tiny build context (no Go toolchain in the image). Tag by **content hash**
-`sb-<HASH>` over (resolved base digest + overlay bytes + worker binary + feature
+`sr-<HASH>` over (resolved base digest + overlay bytes + worker binary + feature
 flags + engine arch). Build via `docker build` + BuildKit `--progress=plain`,
 streamed into the UI's existing ANSI ring-buffer pane. Auto-rebuild when the hash
-changes; `sb rebuild [--no-cache]` forces it. Replace the `imageExists` fatal with
+changes; `sr rebuild [--no-cache]` forces it. Replace the `imageExists` fatal with
 build-then-start; detect docker-missing/not-running first.
 
 ## Density
@@ -178,13 +178,13 @@ RAM resident) after 30m, never while a PTY/WS/agent session or live SSH forward 
 active; lazy resume with a "waking" interstitial. Serialize cold starts with a 2–3
 semaphore to avoid a boot storm.
 
-## State & layout (`~/.config/sbox`, 0700)
+## State & layout (`~/.config/shellraiser`, 0700)
 
 ```
 config.toml          host/coordinator knobs (port, auth, rp_id, tailnet, defaults)
 registry.json        hint cache of workers (flock via registry.lock); reconciled from docker
 coord.lock           single-instance flock; holds pid+port
-sb.sock              unix-socket control plane (0600) — CLI ⇄ daemon
+sr.sock              unix-socket control plane (0600) — CLI ⇄ daemon
 auth/store.json      passkey/WebAuthn credentials (moved from the worker; 0600)
 ssh/coordinator_ed25519[.pub]   coordinator SSH keypair (0600), pubkey injected per worker
 tsnet/               tsnet.Server.Dir (Tailscale node state)
@@ -193,32 +193,32 @@ image/build.json     {tag, base, overlay+worker hashes, image id, built_at}
 workers/<id>/        worker.json + logs
 ```
 
-Per-project: one home volume `sb_<id>_vol` → `/home/ubuntu` (postgres, mise,
+Per-project: one home volume `sr_<id>_vol` → `/home/ubuntu` (postgres, mise,
 dotfiles, worktrees) — the single stateful + backup unit. `id` =
-`.slopbox.toml id` else a stable hash of the absolute path (basename collides
+`.shellraiser.toml id` else a stable hash of the absolute path (basename collides
 across same-named repos; validated + de-duped against the registry). One global
-`sbox_agents_vol` for shared logins (dropped when `isolated_agents`).
+`shellraiser_agents_vol` for shared logins (dropped when `isolated_agents`).
 
 ## Config (two-file split)
 
-- **Project `.slopbox.toml`** (committed, worker description): `id`, `base`/
+- **Project `.shellraiser.toml`** (committed, worker description): `id`, `base`/
   `dockerfile`, `ports`, `postgres`, `code`, `isolated_agents`, `docker_socket`,
   `keep_warm`, `[env]`, `[commands]`, resource overrides.
 - **Global `config.toml`** (host): `port`, `auth`/`no_auth`, `rp_id`, `tailnet`,
   default base, idle grace, per-service defaults.
 - Precedence: flags → global → project → defaults. Strict parsing (reject unknown
   top-level keys; warn inside known tables). Drop the user env-var surface and
-  `.slopbox.local.toml`.
+  `.shellraiser.local.toml`.
 
 ## Daemon & control plane
 
-First `sb` double-forks a detached coordinator (survives terminal close);
+First `sr` double-forks a detached coordinator (survives terminal close);
 single-instance via `coord.lock` flock + health check on fixed `127.0.0.1:7700`.
-Every later `sb` is a thin client that registers cwd and returns the URL the
-instant the coordinator listens. Control plane is a **unix socket** `sb.sock`
+Every later `sr` is a thin client that registers cwd and returns the URL the
+instant the coordinator listens. Control plane is a **unix socket** `sr.sock`
 (0600) — filesystem-permission-gated, no extra TCP port, immune to browser
-CSRF/DNS-rebinding. A newer `sb` binary supersedes an older running coordinator via
-a graceful `/shutdown` that leaves workers running. `sb doctor` re-runs the
+CSRF/DNS-rebinding. A newer `sr` binary supersedes an older running coordinator via
+a graceful `/shutdown` that leaves workers running. `sr doctor` re-runs the
 startup preflight (docker, image, perms, coordinator, ports, tsnet, passkeys) as a
 pass/fail checklist with fix-its.
 
@@ -226,10 +226,10 @@ pass/fail checklist with fix-its.
 
 Do **not** mount the whole `~/.claude`/`~/.codex` shared rw — `~/.claude.json` is a
 monolithic file rewritten almost every turn with no cross-process lock; two workers
-truncate it and log you out everywhere. Instead: mount `sbox_agents_vol:/agents:ro`
+truncate it and log you out everywhere. Instead: mount `shellraiser_agents_vol:/agents:ro`
 (credential files only), and relocate all hot state per-worker via
-`CLAUDE_CONFIG_DIR`/`CODEX_HOME` into `sb_<id>_vol`. Only writers: a single-writer
-`sb login` (one throwaway rw container) and a coordinator-side token-refresh
+`CLAUDE_CONFIG_DIR`/`CODEX_HOME` into `sr_<id>_vol`. Only writers: a single-writer
+`sr login` (one throwaway rw container) and a coordinator-side token-refresh
 daemon. Store **only** agent creds there — never git/cloud/ssh secrets.
 
 ## Cross-platform
@@ -250,18 +250,18 @@ OrbStack / Colima) and warn if the project path is outside the file-sharing root
    `/w/<id>/` proxy; hardened `ensureWorker` (per-worker network, token, caps);
    coordinator auth before proxy (HTTP+WS); project rail; container controls;
    self-daemonizing coordinator (double-fork, flock, unix-socket control plane,
-   reconcile); `sb` subcommands; density (idle auto-stop + lazy-resume).
+   reconcile); `sr` subcommands; density (idle auto-stop + lazy-resume).
 3. ✅ **Dynamic SSH port-mapper.** `x/crypto/ssh` client per worker; loopback-only
    binds; auto-map `ports`, UI toggle for discovered; reserved denylist; hardened
    worker sshd.
-4. ✅ **Tailscale via tsnet.** `sb --tailnet` serves the gated UI on a host-side
+4. ✅ **Tailscale via tsnet.** `sr --tailnet` serves the gated UI on a host-side
    tsnet node (state in the global dir); passkey still required; `--no-auth +
    --tailnet` refused. *(Per-port tailnet exposure + RP-ID pinning: see STATUS.)*
 5. ✅ **Embed + ship.** Embedded Dockerfile assets + cross-compiled worker
-   binaries; local `sb-base` + content-hash overlay build; custom base/dockerfile;
+   binaries; local `sr-base` + content-hash overlay build; custom base/dockerfile;
    postgres off-by-default; goreleaser + Homebrew; no registry.
 6. ✅ **Shared agents + opt-out.** Creds-only `:ro` mount + per-worker
-   `CLAUDE_CONFIG_DIR`/`CODEX_HOME`; `sb login` single-writer; `isolated_agents`
+   `CLAUDE_CONFIG_DIR`/`CODEX_HOME`; `sr login` single-writer; `isolated_agents`
    opt-out. Auth lives on the coordinator.
 
 Each phase was implemented, tested (docker + curl + Playwright), documented, and

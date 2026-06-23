@@ -1,4 +1,4 @@
-// slopbox front-end: worktree nav, tabbed xterm sessions, live status + ding.
+// shellraiser front-end: worktree nav, tabbed xterm sessions, live status + ding.
 'use strict';
 
 // kind → icon name
@@ -42,7 +42,7 @@ const state = {
   worktrees: [],
   selected: null,        // selected worktree path (launch target)
   sessions: [],          // [{id,title,kind,cwd,state,exitCode,pid}]
-  commands: [],          // custom launchers from .slopbox.toml
+  commands: [],          // custom launchers from .shellraiser.toml
   active: null,          // active tab id
   ports: [],             // [{port,process,worktree,sessionId}]
   terms: {},             // id -> { term, fit, ws, host }
@@ -50,7 +50,7 @@ const state = {
   ctrlSticky: false,     // mobile key-bar Ctrl modifier armed for next key
 };
 
-window.__slopbox = state; // exposed for automated tests
+window.__shellraiser = state; // exposed for automated tests
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 
@@ -741,7 +741,7 @@ let titleTimer = null;
 function flashTitle(msg) {
   document.title = msg;
   clearTimeout(titleTimer);
-  titleTimer = setTimeout(() => { document.title = 'slopbox'; }, 5000);
+  titleTimer = setTimeout(() => { document.title = 'shellraiser'; }, 5000);
 }
 
 // ---- new worktree dialog (minimal) ---------------------------------------
@@ -829,13 +829,13 @@ function maybeCloseSidebar() { if (isMobile()) closeSidebar(); }
 
 // ---- theme (system / light / dark) ---------------------------------------
 
-function currentTheme() { return localStorage.getItem('slopbox-theme') || 'system'; }
+function currentTheme() { return localStorage.getItem('shellraiser-theme') || 'system'; }
 function applyTheme(t) {
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.classList.toggle('dark', dark);
   document.querySelectorAll('[data-theme]').forEach((b) => b.classList.toggle('active', b.dataset.theme === t));
 }
-function setTheme(t) { localStorage.setItem('slopbox-theme', t); applyTheme(t); }
+function setTheme(t) { localStorage.setItem('shellraiser-theme', t); applyTheme(t); }
 
 function wire() {
   $('#new-worktree').onclick = newWorktree;
@@ -924,7 +924,7 @@ async function initApp(authEnabled) {
     if (state.projects.length) { location.replace('/w/' + state.projects[0].id + '/'); return; }
     $('#repo-name').textContent = 'no projects';
     $('#empty-state').style.display = 'flex';
-    $('#empty-state').textContent = 'Run `sb` in a git repository to add a project.';
+    $('#empty-state').textContent = 'Run `sr` in a git repository to add a project.';
     setInterval(loadProjects, 5000);
     return;
   }

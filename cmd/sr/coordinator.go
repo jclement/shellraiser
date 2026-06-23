@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jclement/slopbox/internal/auth"
-	"github.com/jclement/slopbox/internal/ui"
-	"github.com/jclement/slopbox/web"
+	"github.com/jclement/shellraiser/internal/auth"
+	"github.com/jclement/shellraiser/internal/ui"
+	"github.com/jclement/shellraiser/web"
 )
 
 // Coordinator fronts many workers behind one port. It serves the unified UI,
@@ -60,7 +60,7 @@ func (c *Coordinator) proxyFor(w *Worker) *httputil.ReverseProxy {
 			r.URL.Path = "/"
 		}
 		if token != "" {
-			r.Header.Set("X-Slopbox-Worker", token)
+			r.Header.Set("X-Shellraiser-Worker", token)
 		}
 	}
 	p.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -111,7 +111,7 @@ func isDataRoute(rest string) bool {
 // --- control plane (unix socket) ------------------------------------------
 //
 // The CLI talks to the running daemon over a 0600 unix socket
-// (~/.config/sbox/sb.sock): filesystem-permission-gated, no extra TCP port,
+// (~/.config/shellraiser/sr.sock): filesystem-permission-gated, no extra TCP port,
 // immune to browser CSRF/DNS-rebinding. Endpoints: health, register, shutdown.
 
 func (c *Coordinator) controlMux() *http.ServeMux {
@@ -238,7 +238,7 @@ func (c *Coordinator) handlePortList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// autoMap forwards the project's declared .slopbox.toml `ports` on registration.
+// autoMap forwards the project's declared .shellraiser.toml `ports` on registration.
 func (c *Coordinator) autoMap(w *Worker) {
 	for _, p := range declaredPorts(w.Project) {
 		if _, err := c.pm.Map(w, p); err != nil {

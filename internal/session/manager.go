@@ -97,7 +97,7 @@ func (m *Manager) Create(o CreateOpts) (*Session, error) {
 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = o.Cwd
-	cmd.Env = append(append([]string{}, m.env...), "TERM=xterm-256color", "SLOPBOX=1")
+	cmd.Env = append(append([]string{}, m.env...), "TERM=xterm-256color", "SHELLRAISER=1")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: o.Cols, Rows: o.Rows})
 	if err != nil {

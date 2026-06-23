@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jclement/slopbox/internal/session"
+	"github.com/jclement/shellraiser/internal/session"
 )
 
 // Port is a TCP port something inside the box is listening on, optionally

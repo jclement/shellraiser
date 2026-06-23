@@ -1,4 +1,4 @@
-// Package ui provides slopbox's colourful structured logging — built so that
+// Package ui provides shellraiser's colourful structured logging — built so that
 // `docker compose logs -f` is a pleasure to watch.
 package ui
 
@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// ANSI palette (256-colour). Disabled when NO_COLOR / SLOPBOX_NO_COLOR is set.
+// ANSI palette (256-colour). Disabled when NO_COLOR / SHELLRAISER_NO_COLOR is set.
 const (
 	reset  = "\x1b[0m"
 	dim    = "\x1b[2m"
@@ -23,7 +23,7 @@ const (
 	gray   = "\x1b[38;5;245m"
 )
 
-var colorEnabled = os.Getenv("NO_COLOR") == "" && os.Getenv("SLOPBOX_NO_COLOR") == ""
+var colorEnabled = os.Getenv("NO_COLOR") == "" && os.Getenv("SHELLRAISER_NO_COLOR") == ""
 
 func c(code, s string) string {
 	if !colorEnabled {
@@ -55,12 +55,12 @@ func pad(s string, n int) string {
 func Banner() {
 	if colorEnabled {
 		fmt.Fprintln(os.Stdout)
-		fmt.Fprintln(os.Stdout, "  "+purple+bold+"▟█▙ slopbox"+reset+"  "+dim+"sandboxed vibe coding"+reset)
+		fmt.Fprintln(os.Stdout, "  "+purple+bold+"▟█▙ shellraiser"+reset+"  "+dim+"sandboxed vibe coding"+reset)
 		fmt.Fprintln(os.Stdout, "  "+purple+"▜█▛"+reset+" "+dim+"────────────────────────"+reset)
 		fmt.Fprintln(os.Stdout)
 		return
 	}
-	fmt.Fprintln(os.Stdout, "slopbox — sandboxed vibe coding")
+	fmt.Fprintln(os.Stdout, "shellraiser — sandboxed vibe coding")
 }
 
 // Boot prints a config summary line: "comp  k=v  k=v".
@@ -91,7 +91,7 @@ func Done(kind, title, worktree string) {
 	line("✓", green, "done", fmt.Sprintf("%s %s %s", c(cyan, kind), title, c(dim, "· "+worktree)))
 }
 
-// Colour primitives for ad-hoc views (e.g. the `sb status` dashboard). They
+// Colour primitives for ad-hoc views (e.g. the `sr status` dashboard). They
 // honour NO_COLOR like everything else in this package.
 func Dim(s string) string    { return c(dim, s) }
 func Bold(s string) string   { return c(bold, s) }

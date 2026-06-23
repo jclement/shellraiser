@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-  <title>slopbox</title>
+  <title>shellraiser</title>
   <script>
     // Apply the saved theme before paint to avoid a flash.
     (function () {
-      var t = localStorage.getItem('slopbox-theme') || 'system';
+      var t = localStorage.getItem('shellraiser-theme') || 'system';
       var dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
       document.documentElement.classList.toggle('dark', dark);
     })();
@@ -89,7 +89,7 @@
     <div class="w-[22rem] border border-app bg-panel">
       <div class="flex items-center gap-2 border-b border-app px-4 py-3">
         <span class="text-accent" data-icon="box"></span>
-        <span class="font-semibold tracking-tight text-app">slopbox</span>
+        <span class="font-semibold tracking-tight text-app">shellraiser</span>
         <span id="login-rp" class="ml-auto text-[11px] text-faint"></span>
       </div>
       <div id="login-signin" class="hidden border-b border-app px-4 py-4">
@@ -115,7 +115,7 @@
     <aside id="sidebar" class="fixed inset-y-0 left-0 z-30 flex w-72 max-w-[85vw] shrink-0 -translate-x-full flex-col border-r border-app bg-panel transition-transform duration-200 md:static md:translate-x-0">
       <div class="flex items-center gap-2 border-b border-app px-4 py-3.5">
         <span class="text-accent" data-icon="box"></span>
-        <span class="font-semibold tracking-tight text-app">slopbox</span>
+        <span class="font-semibold tracking-tight text-app">shellraiser</span>
         <span id="repo-name" class="ml-auto truncate text-xs text-faint"></span>
       </div>
 

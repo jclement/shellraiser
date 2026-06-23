@@ -23,7 +23,7 @@ const ephemeralTTL = 2 * time.Minute
 // `ephemeralTTL`, and returns a self-contained `ssh` command (the private key
 // inline) that forwards every running dev port — a one-click "reach my box".
 func (s *Server) handleSSHCommand(w http.ResponseWriter, r *http.Request) {
-	if os.Getenv("SLOPBOX_SSH") != "1" {
+	if os.Getenv("SHELLRAISER_SSH") != "1" {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("ssh is not enabled — start the box with --ssh"))
 		return
 	}
@@ -34,7 +34,7 @@ func (s *Server) handleSSHCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Mint an ephemeral ed25519 key with a unique marker comment.
-	marker := "slopbox-ephemeral-" + hexN(8)
+	marker := "shellraiser-ephemeral-" + hexN(8)
 	dir, err := os.MkdirTemp("", "slopssh")
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
@@ -66,11 +66,11 @@ func (s *Server) handleSSHCommand(w http.ResponseWriter, r *http.Request) {
 	// connected in time keeps running).
 	time.AfterFunc(ephemeralTTL, func() { _ = removeAuthorizedKeyByMarker(akPath, marker) })
 
-	// Forward every listening dev port (skip slopbox's own internals).
+	// Forward every listening dev port (skip shellraiser's own internals).
 	hostName := hostOnly(r.Host)
 	sshPort := "22"
 	if isLocal(hostName) {
-		sshPort = envOr2("SLOPBOX_SSH_HOST_PORT", "2222") // published host port
+		sshPort = envOr2("SHELLRAISER_SSH_HOST_PORT", "2222") // published host port
 	}
 	ports := devPorts(s.cfg.Addr)
 	var fwd strings.Builder
@@ -87,7 +87,7 @@ chmod 600 "$KEY"; ssh -i "$KEY" -o StrictHostKeyChecking=accept-new -o UserKnown
 	writeJSON(w, map[string]any{"command": cmd, "ttlSeconds": int(ephemeralTTL.Seconds()), "ports": ports, "host": hostName, "port": sshPort})
 }
 
-// devPorts returns listening TCP ports minus slopbox's own internals.
+// devPorts returns listening TCP ports minus shellraiser's own internals.
 func devPorts(addr string) []int {
 	skip := map[int]bool{8081: true, 8082: true, 22: true} // pgweb, code-server, sshd
 	if i := strings.LastIndex(addr, ":"); i >= 0 {

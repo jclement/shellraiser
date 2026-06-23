@@ -1,4 +1,4 @@
-// Package web holds the embedded slopbox front-end assets.
+// Package web holds the embedded shellraiser front-end assets.
 package web
 
 import "embed"

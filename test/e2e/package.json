@@ -1,8 +1,8 @@
 {
-  "name": "slopbox-e2e",
+  "name": "shellraiser-e2e",
   "private": true,
   "type": "module",
-  "description": "Playwright end-to-end tests for the slopbox web UI.",
+  "description": "Playwright end-to-end tests for the shellraiser web UI.",
   "dependencies": {
     "playwright": "^1.61.0"
   }

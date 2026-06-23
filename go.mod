@@ -1,4 +1,4 @@
-module github.com/jclement/slopbox
+module github.com/jclement/shellraiser
 
 go 1.26.4
 

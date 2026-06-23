@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jclement/slopbox/internal/ui"
+	"github.com/jclement/shellraiser/internal/ui"
 	"tailscale.com/tsnet"
 )
 
@@ -20,14 +20,14 @@ import (
 func serveTailnet(c *Coordinator, dir string) {
 	s := &tsnet.Server{
 		Dir:      filepath.Join(dir, "tsnet"),
-		Hostname: "slopbox",
+		Hostname: "shellraiser",
 		AuthKey:  os.Getenv("TAILSCALE_KEY"), // optional
 		// Surface tsnet's own logs (incl. the first-run "authenticate at …" URL)
-		// to the coordinator log so the user can complete login via `sb logs`.
+		// to the coordinator log so the user can complete login via `sr logs`.
 	}
 	defer s.Close()
 	if os.Getenv("TAILSCALE_KEY") == "" {
-		ui.Info("tailnet", "first run — find the login URL in the coordinator log (sb logs)")
+		ui.Info("tailnet", "first run — find the login URL in the coordinator log (sr logs)")
 	}
 
 	ln, err := s.ListenTLS("tcp", ":443")

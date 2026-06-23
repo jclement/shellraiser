@@ -1,4 +1,4 @@
-# slopbox
+# shellraiser
 
 A single Docker image for sandboxed "vibe coding." You point it at a project
 repo, run it, and get a web-based front end for managing git worktrees and
@@ -15,14 +15,14 @@ the container — not your real machine — is the blast radius.
 ## Quickstart (dogfood)
 
 `./run.sh` builds the image and runs it against a local repo, with state bind-
-mounted to `~/.slopbox/<name>/home` so it persists:
+mounted to `~/.shellraiser/<name>/home` so it persists:
 
 ```
 ./run.sh                                  # this repo, port 7000
 ./run.sh --name dev --port 7100 ~/dev/barreleye
 ./run.sh --rebuild                        # force-rebuild the image first
 ./run.sh --docker                         # pass through the host docker socket
-./run.sh --pull                           # use ghcr.io/jclement/slopbox:latest
+./run.sh --pull                           # use ghcr.io/jclement/shellraiser:latest
 ```
 
 It prints the magic link (`http://localhost:<port>/?t=<token>`) on start.
@@ -35,9 +35,9 @@ in. No per-host installer, no TUI. You get at everything through the browser.
 ```
 docker run \
   -v /path/to/project:/work \          # the repo you're hacking on
-  -v slopbox-home:/home/ubuntu \         # persistent state (home dir)
+  -v shellraiser-home:/home/ubuntu \         # persistent state (home dir)
   -p 7000:7000 \                       # web UI
-  ghcr.io/jclement/slopbox:latest
+  ghcr.io/jclement/shellraiser:latest
 ```
 
 - **`/work`** — bind mount of the project repo (e.g. Barreleye). Worktrees are
@@ -54,7 +54,7 @@ docker run \
   the socket's group so it works without running as root.
 
 **Worktree storage:** worktrees live in the persistent home mount
-(`/home/ubuntu/worktrees/<name>`, set via `SLOPBOX_WORKTREES`), not inside `/work`.
+(`/home/ubuntu/worktrees/<name>`, set via `SHELLRAISER_WORKTREES`), not inside `/work`.
 That keeps the project bind mount clean and lets worktrees persist with the rest
 of your state; they still reference the repo's `.git` at `/work`.
 
@@ -163,7 +163,7 @@ Want git commit signing and SSH to "just work" inside the box:
 
 ## Build & release
 
-Repo: **github.com/jclement/slopbox** → images at **ghcr.io/jclement/slopbox**.
+Repo: **github.com/jclement/shellraiser** → images at **ghcr.io/jclement/shellraiser**.
 
 - The **`Dockerfile`** produces the image. No host binary to ship.
 - **`.github/workflows/build.yml`** builds and pushes to GHCR:

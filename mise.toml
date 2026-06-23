@@ -1,26 +1,26 @@
-# slopbox dev toolchain + tasks.  `mise install` then `mise run <task>`.
+# shellraiser dev toolchain + tasks.  `mise install` then `mise run <task>`.
 [tools]
 go = "1.26"
 goreleaser = "latest"
 
 [tasks.worker-bins]
-description = "Cross-compile the linux worker binaries into the sb embed dir"
+description = "Cross-compile the linux worker binaries into the sr embed dir"
 run = """
 set -e
 for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags='-s -w' \
-    -o cmd/sb/assets/bin/worker-linux-$arch ./cmd/slopbox
+    -o cmd/sr/assets/bin/worker-linux-$arch ./cmd/worker
 done
 """
 
 [tasks.build]
-description = "Cross-compile workers, embed them, and build the sb host binary into dist/"
+description = "Cross-compile workers, embed them, and build the sr host binary into dist/"
 depends = ["worker-bins"]
-run = "CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/sb ./cmd/sb"
+run = "CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/sr ./cmd/sr"
 
 [tasks.build-worker]
 description = "Build just the in-container worker binary into dist/"
-run = "CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/slopbox ./cmd/slopbox"
+run = "CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/shellraiser ./cmd/worker"
 
 [tasks.test]
 description = "Run the Go unit tests"
@@ -36,11 +36,11 @@ run = "bash test/e2e/coordinator.sh"
 
 [tasks.dev]
 description = "Build the image and run a box in the foreground (--rm, live logs)"
-run = "./slopbox.sh start --rebuild --fg"
+run = "./shellraiser.sh start --rebuild --fg"
 
 [tasks.nuke]
 description = "Nuke this repo's box + its persistent volume/state"
-run = "./slopbox.sh nuke"
+run = "./shellraiser.sh nuke"
 
 [tasks.package]
 description = "Snapshot release build (goreleaser, no publish)"

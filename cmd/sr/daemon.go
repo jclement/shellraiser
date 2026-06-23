@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jclement/slopbox/internal/auth"
-	"github.com/jclement/slopbox/internal/ui"
+	"github.com/jclement/shellraiser/internal/auth"
+	"github.com/jclement/shellraiser/internal/ui"
 )
 
-// version is the sb release version, overridden at build time via
+// version is the sr release version, overridden at build time via
 // -ldflags "-X main.version=…" (goreleaser). Also gates the base image tag and
 // the coordinator-supersede handshake.
 var version = "0.2.0"
@@ -32,7 +32,7 @@ type coordMeta struct {
 
 func metaPath(dir string) string { return filepath.Join(dir, "coord.json") }
 func lockPath(dir string) string { return filepath.Join(dir, "coord.lock") }
-func sockPath(dir string) string { return filepath.Join(dir, "sb.sock") }
+func sockPath(dir string) string { return filepath.Join(dir, "sr.sock") }
 
 // sockClient returns an HTTP client bound to the daemon's unix control socket.
 func sockClient(sock string) *http.Client {
@@ -64,7 +64,7 @@ func liveCoordinator(dir string) (*coordMeta, bool) {
 	return &m, resp.StatusCode == 200
 }
 
-// runDaemon is the detached coordinator process (sb __daemon). It single-
+// runDaemon is the detached coordinator process (sr __daemon). It single-
 // instances via an exclusive flock, serves the UI + control socket, and exits if
 // another daemon already holds the lock.
 func runDaemon(dir, port string, noAuth, tailnet bool) {
@@ -73,7 +73,7 @@ func runDaemon(dir, port string, noAuth, tailnet bool) {
 		fatal("daemon lock: %v", err)
 	}
 	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		ui.Info("sb", "another coordinator is already running — exiting")
+		ui.Info("sr", "another coordinator is already running — exiting")
 		os.Exit(0)
 	}
 	// We own the lock for our lifetime.
@@ -105,7 +105,7 @@ func runDaemon(dir, port string, noAuth, tailnet bool) {
 }
 
 // ensureCoordinator returns the meta of a running daemon, spawning a detached one
-// if none is alive. The first sb in any shell starts the daemon; the rest attach.
+// if none is alive. The first sr in any shell starts the daemon; the rest attach.
 func ensureCoordinator(dir, port string, noAuth, tailnet bool) (*coordMeta, error) {
 	if m, ok := liveCoordinator(dir); ok {
 		return m, nil
@@ -143,7 +143,7 @@ func spawnDaemon(dir, port string, noAuth, tailnet bool) error {
 	}
 	cmd := exec.Command(self, args...)
 	cmd.Stdout, cmd.Stderr = logf, logf
-	cmd.Env = append(os.Environ(), "SBOX_HOME="+dir)
+	cmd.Env = append(os.Environ(), "SHELLRAISER_HOME="+dir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return err

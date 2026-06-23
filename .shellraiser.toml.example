@@ -1,15 +1,15 @@
-# .slopbox.toml — checked-in project config (safe to commit).
-# Override locally with .slopbox.local.toml (gitignore it); env vars win over both.
-# Precedence (highest first): env  →  .slopbox.local.toml  →  .slopbox.toml  →  defaults
+# .shellraiser.toml — checked-in project config (safe to commit).
+# Override locally with .shellraiser.local.toml (gitignore it); env vars win over both.
+# Precedence (highest first): env  →  .shellraiser.local.toml  →  .shellraiser.toml  →  defaults
 
-# id            = "barreleye"    # box identity → sb_<id> container + sb_<id>_vol volume + tailnet name
+# id            = "barreleye"    # box identity → sr_<id> container + sr_<id>_vol volume + tailnet name
 # addr          = ":7000"        # listen address
 # name          = "my-project"   # header repo name (else derived from git remote)
-# worktrees_dir = ""             # default: $SLOPBOX_WORKTREES or <repo>/.worktrees
+# worktrees_dir = ""             # default: $SHELLRAISER_WORKTREES or <repo>/.worktrees
 # postgres      = true           # run postgres + pgweb (/db)
 # code          = true           # run code-server (/edit, per-worktree VS Code)
 # For HTTP, prefer reaching internal ports via /p/<port>/ (no publishing needed).
-# These are published as host ports by slopbox.sh on start (ranges allowed, but
+# These are published as host ports by shellraiser.sh on start (ranges allowed, but
 # huge ranges are capped — Docker reserves a proxy per port):
 # ports         = ["5137", "4000-4010"]
 # no_auth       = false          # disable auth entirely (trusted local only)
@@ -22,7 +22,7 @@
 # shell  = ["zsh"]
 
 # Custom launchers — appear as extra buttons in the toolbar. These can ONLY be
-# defined in .slopbox files (not env). Each runs in the selected worktree.
+# defined in .shellraiser files (not env). Each runs in the selected worktree.
 [[commands]]
 name = "dev"
 icon = "▶"
