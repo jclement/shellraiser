@@ -872,7 +872,7 @@ function openColorPicker(w, anchor) {
     if (!c) sw.textContent = '∅';
     sw.onclick = async (ev) => {
       ev.stopPropagation();
-      try { await api('POST', '/api/worktrees/color', { path: w.path, color: c }); w.color = c; renderWorktrees(); }
+      try { await api('POST', '/api/worktrees/color', { path: w.path, color: c }); w.color = c; renderWorktrees(); renderContext(); }
       catch (e) { toast(e.message); }
       pop.remove();
     };

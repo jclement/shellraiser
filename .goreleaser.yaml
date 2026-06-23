@@ -40,6 +40,8 @@ brews:
     repository:
       owner: jclement
       name: homebrew-tap
+      # PAT with write access to the tap repo (CI sets HOMEBREW_TAP_TOKEN).
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/jclement/shellraiser"
     description: "Sandboxed vibe-coding coordinator — one UI for many per-project worker containers"
     license: "MIT"
