@@ -91,7 +91,8 @@ start_postgres() {
   return 0
 }
 
-if [ "${SLOPBOX_POSTGRES:-1}" != "0" ]; then
+# v2 default: postgres OFF (opt-in per project via SLOPBOX_POSTGRES=1 / config).
+if [ "${SLOPBOX_POSTGRES:-0}" != "0" ]; then
   # On failure, force the flag off so the web app hides the broken /db tab.
   start_postgres || export SLOPBOX_POSTGRES=0
 fi

@@ -54,8 +54,9 @@ type Config struct {
 	Commands []Command `toml:"commands"`
 }
 
-// PostgresEnabled resolves the tri-state Postgres flag (default on).
-func (c Config) PostgresEnabled() bool { return c.Postgres == nil || *c.Postgres }
+// PostgresEnabled resolves the tri-state Postgres flag. v2 default: OFF — most
+// projects never touch a DB and an idle postgres is the biggest memory sink.
+func (c Config) PostgresEnabled() bool { return c.Postgres != nil && *c.Postgres }
 
 // CodeServerEnabled resolves the tri-state code-server flag (default on).
 func (c Config) CodeServerEnabled() bool { return c.CodeServer == nil || *c.CodeServer }

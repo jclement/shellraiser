@@ -75,7 +75,10 @@ func TestDefaults(t *testing.T) {
 	if c.Addr != ":7000" {
 		t.Errorf("default addr: got %q", c.Addr)
 	}
-	if !c.PostgresEnabled() || !c.CodeServerEnabled() {
-		t.Error("postgres + code-server should default on")
+	if c.PostgresEnabled() {
+		t.Error("postgres should default OFF in v2 (opt-in)")
+	}
+	if !c.CodeServerEnabled() {
+		t.Error("code-server should default on")
 	}
 }

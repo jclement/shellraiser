@@ -5,10 +5,12 @@
 FROM {{.Base}}
 {{if .Lean}}
 # Custom base — add the must-haves the coordinator depends on. Debian/Ubuntu only.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# DEBIAN_FRONTEND=noninteractive so openssh-server's postinst can't block on debconf.
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl git openssh-server gosu sudo \
     && rm -rf /var/lib/apt/lists/* \
-    && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash ubuntu) \
     && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
     && git config --system --add safe.directory '*'
 {{end}}

@@ -170,6 +170,12 @@ func ensureWorker(id, project, image string) (*Worker, error) {
 		// coordinator can open -L tunnels through the worker's sshd.
 		args = append(args, "-e", "SLOPBOX_SSH_PUBKEY="+coordAuthKey)
 	}
+	// Tell the entrypoint whether to start postgres (default off), matching what
+	// the worker's own config resolves so the process and the /db tab agree.
+	cfg, _ := config.Load(project)
+	if cfg.PostgresEnabled() {
+		args = append(args, "-e", "SLOPBOX_POSTGRES=1")
+	}
 	args = append(args, image)
 	if _, err := dockerRun(args...); err != nil {
 		return nil, fmt.Errorf("start worker: %w", err)

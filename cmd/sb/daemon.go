@@ -18,7 +18,10 @@ import (
 	"github.com/jclement/slopbox/internal/ui"
 )
 
-const version = "0.2.0"
+// version is the sb release version, overridden at build time via
+// -ldflags "-X main.version=…" (goreleaser). Also gates the base image tag and
+// the coordinator-supersede handshake.
+var version = "0.2.0"
 
 // coordMeta is written by the daemon so clients can find it.
 type coordMeta struct {

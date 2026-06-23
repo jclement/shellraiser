@@ -64,10 +64,12 @@ func resolveImage(project string) (string, error) {
 		return "", err
 	}
 
+	entrypoint, _ := assets.FS.ReadFile("entrypoint.sh")
 	h := sha256.New()
 	h.Write([]byte(base))
 	h.Write([]byte(arch))
 	h.Write(rendered.Bytes())
+	h.Write(entrypoint) // entrypoint ships in the overlay → must retrigger builds
 	h.Write(worker)
 	tag := "sb-" + hex.EncodeToString(h.Sum(nil))[:12]
 
