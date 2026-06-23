@@ -1,0 +1,23 @@
+# slopbox lean overlay — rendered by `sb` on top of {{.Base}} (the slopbox base
+# by default, or a project's own base/dockerfile image). It injects only the
+# irreducible must-haves and the worker binary (COPYed LAST so a worker bump
+# rebuilds only this tiny final layer).
+FROM {{.Base}}
+{{if .Lean}}
+# Custom base — add the must-haves the coordinator depends on. Debian/Ubuntu only.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git openssh-server gosu sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
+    && git config --system --add safe.directory '*'
+{{end}}
+ENV SLOPBOX_REPO=/work \
+    SLOPBOX_WORKTREES=/home/ubuntu/worktrees \
+    PGDATA=/home/ubuntu/.local/share/slopbox/postgres
+COPY entrypoint.sh /usr/local/bin/slopbox-entrypoint
+COPY worker /usr/local/bin/slopbox
+RUN chmod +x /usr/local/bin/slopbox-entrypoint /usr/local/bin/slopbox
+WORKDIR /work
+EXPOSE 7000
+ENTRYPOINT ["slopbox-entrypoint"]

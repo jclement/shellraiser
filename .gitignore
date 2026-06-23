@@ -15,3 +15,4 @@
 # e2e test deps
 test/e2e/node_modules/
 test/e2e/test-results/
+cmd/sb/assets/bin/worker-linux-*

@@ -143,10 +143,11 @@ func spawnDaemon(dir, port string, noAuth bool) error {
 	return nil
 }
 
-// registerWithDetails asks the daemon to ensure a worker for project, prints the
-// first-run bootstrap code if auth needs enrolling, and returns the worker id.
-func registerWithDetails(m *coordMeta, project string) (string, error) {
-	body := mustJSON(map[string]string{"project": project})
+// registerWithDetails asks the daemon to ensure a worker for project (using a
+// pre-built image), prints the first-run bootstrap code if auth needs enrolling,
+// and returns the worker id.
+func registerWithDetails(m *coordMeta, project, image string) (string, error) {
+	body := mustJSON(map[string]string{"project": project, "image": image})
 	resp, err := sockClient(m.Sock).Post("http://unix/register", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", err

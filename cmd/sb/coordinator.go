@@ -120,13 +120,13 @@ func (c *Coordinator) controlMux() *http.ServeMux {
 		writeJSON(w, map[string]string{"port": c.port, "version": version})
 	})
 	m.HandleFunc("POST /register", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Project string }
+		var req struct{ Project, Image string }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		id := boxID(req.Project)
-		worker, err := ensureWorker(id, req.Project)
+		worker, err := ensureWorker(id, req.Project, req.Image)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -114,7 +114,7 @@ func newToken() string {
 // a per-worker docker network, resource caps, a loopback-published sshd, and a
 // coordinator-injected API token. The worker's own passkey auth is always off —
 // auth lives at the coordinator now; the token fences the loopback port.
-func ensureWorker(id, project string) (*Worker, error) {
+func ensureWorker(id, project, image string) (*Worker, error) {
 	w := &Worker{
 		ID:        id,
 		Project:   project,
@@ -130,6 +130,15 @@ func ensureWorker(id, project string) (*Worker, error) {
 		return populatePorts(w)
 	}
 	_, _ = dockerRun("rm", "-f", w.Container) // clear any stopped remnant
+
+	// Image is pre-built by the client (so build progress streams to the user's
+	// terminal); fall back to resolving here if a caller didn't supply it.
+	if image == "" {
+		var err error
+		if image, err = resolveImage(project); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := ensureNetwork(w.Network); err != nil {
 		return nil, err
@@ -161,7 +170,7 @@ func ensureWorker(id, project string) (*Worker, error) {
 		// coordinator can open -L tunnels through the worker's sshd.
 		args = append(args, "-e", "SLOPBOX_SSH_PUBKEY="+coordAuthKey)
 	}
-	args = append(args, workerImage)
+	args = append(args, image)
 	if _, err := dockerRun(args...); err != nil {
 		return nil, fmt.Errorf("start worker: %w", err)
 	}

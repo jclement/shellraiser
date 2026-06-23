@@ -56,10 +56,10 @@ func cmdLs(_ []string) {
 	}
 	ui.Print("  " + ui.Accent("▟█▙ slopbox") + "  " + coordLine)
 	img := ui.Green("✔")
-	if !imageExists(workerImage) {
-		img = ui.Red("missing")
+	if !imageExists(baseImage()) {
+		img = ui.Gray("not built yet")
 	}
-	ui.Print("  " + ui.Accent("▜█▛") + ui.Gray("  image ") + workerImage + "  " + img)
+	ui.Print("  " + ui.Accent("▜█▛") + ui.Gray("  base ") + baseImage() + "  " + img)
 	ui.Print("")
 
 	workers := reconciledRegistry().list()
@@ -158,7 +158,17 @@ func cmdDoctor(_ []string) {
 	dir, err := globalDir()
 	check("global dir", err == nil, dir)
 	check("docker", dockerAlive(), "daemon reachable")
-	check("worker image", imageExists(workerImage), workerImage)
+	check("worker arch", true, "linux/"+engineArch())
+	if _, err := workerBinary(engineArch()); err != nil {
+		check("worker binary", false, err.Error())
+	} else {
+		check("worker binary", true, "embedded")
+	}
+	if imageExists(baseImage()) {
+		check("base image", true, baseImage())
+	} else {
+		check("base image", true, baseImage()+" — pending (builds on first run)")
+	}
 	if dockerAlive() {
 		// No managed worker should sit on the default bridge (isolation invariant).
 		out, _ := dockerOut("ps", "--filter", "label=slopbox.role=worker",

@@ -31,8 +31,14 @@ type Config struct {
 	Token        string `toml:"token"`
 	ID           string `toml:"id"`       // box identity (else the startup folder name)
 	RPID         string `toml:"rp_id"`    // pin the WebAuthn RP ID (else discovered from Host)
-	Postgres     *bool  `toml:"postgres"` // nil ⇒ default (enabled)
+	Postgres     *bool  `toml:"postgres"` // nil ⇒ default (off in v2)
 	CodeServer   *bool  `toml:"code"`     // code-server at /edit; nil ⇒ default (enabled)
+
+	// v2: image base. base = an image ref ("node:20"); dockerfile = a path in the
+	// repo slopbox builds first. Mutually exclusive; empty ⇒ the slopbox base.
+	Base           string `toml:"base"`
+	Dockerfile     string `toml:"dockerfile"`
+	IsolatedAgents bool   `toml:"isolated_agents"` // own agent-login volume (no sharing)
 
 	// Host port mappings published by slopbox.sh on start (e.g. ["5137",
 	// "4000-4010"]). For HTTP, prefer the /p/<port>/ proxy — no publishing needed.
@@ -102,6 +108,15 @@ func mergeFile(c *Config, path string) error {
 	}
 	if md.IsDefined("code") {
 		c.CodeServer = f.CodeServer
+	}
+	if md.IsDefined("base") {
+		c.Base = f.Base
+	}
+	if md.IsDefined("dockerfile") {
+		c.Dockerfile = f.Dockerfile
+	}
+	if md.IsDefined("isolated_agents") {
+		c.IsolatedAgents = f.IsolatedAgents
 	}
 	if md.IsDefined("ports") {
 		c.Ports = f.Ports

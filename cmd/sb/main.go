@@ -16,8 +16,6 @@ import (
 	"github.com/jclement/slopbox/internal/ui"
 )
 
-const workerImage = "slopbox:local" // built from the embedded Dockerfile in Phase 5
-
 func main() {
 	args := os.Args[1:]
 	cmd := ""
@@ -102,17 +100,20 @@ func cmdUp(args []string) {
 	if !isGitRepo(project) {
 		fatal("%s is not a git repository (run `git init` first)", project)
 	}
-	if !imageExists(workerImage) {
-		fatal("image %s not found — build it first (`mise run dev` / image build lands in Phase 5)", workerImage)
-	}
 
-	// Ensure the (detached) coordinator is running, then register this project.
+	// Build the worker image from embedded assets up-front so progress streams to
+	// THIS terminal (the first-run base build takes a few minutes); register then
+	// only has to start the container.
 	ui.Boot("sb", "project", boxID(project), "path", project)
+	image, err := resolveImage(project)
+	if err != nil {
+		fatal("%v", err)
+	}
 	m, err := ensureCoordinator(dir, port, noAuth)
 	if err != nil {
 		fatal("%v", err)
 	}
-	id, err := registerWithDetails(m, project)
+	id, err := registerWithDetails(m, project, image)
 	if err != nil {
 		fatal("%v", err)
 	}
