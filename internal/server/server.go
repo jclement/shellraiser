@@ -3,6 +3,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -183,8 +184,20 @@ func (s *Server) Run() error {
 
 // gate enforces auth on data/proxy routes while leaving the static UI and the
 // /api/auth/* endpoints public (the SPA gates itself via /api/auth/status).
+//
+// In v2 the worker is an untrusted backend reached only through the coordinator.
+// When SLOPBOX_WORKER_TOKEN is set, EVERY request (static included) must carry
+// the matching X-Slopbox-Worker header — loopback binding is not authentication
+// on a shared host, so this fences out any other local process. The coordinator
+// injects the header on every proxied hop.
 func (s *Server) gate(next http.Handler) http.Handler {
+	workerToken := os.Getenv("SLOPBOX_WORKER_TOKEN")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if workerToken != "" &&
+			subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Slopbox-Worker")), []byte(workerToken)) != 1 {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		if publicPath(r.URL.Path) || s.auth.Authenticated(r) {
 			next.ServeHTTP(w, r)
 			return

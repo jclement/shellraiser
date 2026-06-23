@@ -1,145 +1,124 @@
-// Command sb is the slopbox host coordinator (v2). Phase 1: ensure a worker
-// container for the current project and serve its UI through one coordinator
-// port. Multi-project aggregation, SSH port-mapping, and tsnet come next.
+// Command sb is the slopbox host coordinator (v2). One sb fronts many per-project
+// worker containers behind a single UI and port. Bare `sb` ensures the
+// coordinator is up, registers the current directory as a worker, and opens the
+// UI; subcommands manage the fleet.
+//
+// This is the Phase-2 coordinator core: a foreground coordinator that reconciles
+// every managed worker from docker labels and proxies each under /w/<id>/. The
+// detached daemon + unix-socket control plane land in a later increment.
 package main
 
 import (
-	"flag"
 	"fmt"
-	"log"
-	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
-	"time"
+
+	"github.com/jclement/slopbox/internal/ui"
 )
 
-const workerImage = "slopbox:local" // built from the repo Dockerfile (embedded in a later phase)
+const workerImage = "slopbox:local" // built from the embedded Dockerfile in Phase 5
 
 func main() {
-	log.SetFlags(log.Ltime)
-	noAuth := flag.Bool("no-auth", false, "disable web auth")
-	port := flag.String("port", "7700", "coordinator UI port")
-	flag.Parse()
+	args := os.Args[1:]
+	cmd := ""
+	if len(args) > 0 && !isFlag(args[0]) {
+		cmd, args = args[0], args[1:]
+	}
+	switch cmd {
+	case "", "up":
+		cmdUp(args)
+	case "ls", "status":
+		cmdLs(args)
+	case "stop":
+		cmdStop(args)
+	case "nuke":
+		cmdNuke(args)
+	case "logs":
+		cmdLogs(args)
+	case "doctor":
+		cmdDoctor(args)
+	case "help", "-h", "--help":
+		usage()
+	default:
+		fatal("unknown command %q (try `sb help`)", cmd)
+	}
+}
 
-	project := flag.Arg(0)
+func isFlag(s string) bool { return len(s) > 0 && s[0] == '-' }
+
+func usage() {
+	fmt.Print(`sb — slopbox coordinator
+
+  sb [DIR]        ensure the coordinator, register DIR (default: cwd), open the UI
+  sb ls           list registered projects
+  sb stop  [id]   stop a worker (all if omitted)
+  sb nuke   id    remove a worker container + its volume
+  sb logs   id    stream a worker's container logs
+  sb doctor       preflight checks (docker, image, perms)
+  sb help         this message
+
+flags (for bare sb): --no-auth, --port <p>
+`)
+}
+
+// cmdUp is the default: ensure the coordinator is running and the cwd is
+// registered as a worker, then serve. (Pre-daemon: this process IS the
+// coordinator and adopts every other managed worker via reconcile.)
+func cmdUp(args []string) {
+	var noAuth bool
+	port := "7700"
+	project := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-auth":
+			noAuth = true
+		case "--port":
+			if i+1 < len(args) {
+				i++
+				port = args[i]
+			}
+		default:
+			if !isFlag(args[i]) && project == "" {
+				project = args[i]
+			}
+		}
+	}
 	if project == "" {
 		project, _ = os.Getwd()
 	}
 	project, _ = filepath.Abs(project)
+
+	if _, err := globalDir(); err != nil {
+		fatal("%v", err)
+	}
+	if !dockerAlive() {
+		fatal("docker is not running — start Docker Desktop and retry")
+	}
 	if !isGitRepo(project) {
-		log.Fatalf("sb: %s is not a git repository", project)
+		fatal("%s is not a git repository (run `git init` first)", project)
 	}
 	if !imageExists(workerImage) {
-		log.Fatalf("sb: image %s not found — build it first (./slopbox.sh start --rebuild, image build coming to sb)", workerImage)
+		fatal("image %s not found — build it first (`mise run dev` / image build lands in Phase 5)", workerImage)
 	}
 
 	id := boxID(project)
-	workerPort, err := ensureWorker(id, project, *noAuth)
+	ui.Boot("sb", "project", id, "path", project)
+	w, err := ensureWorker(id, project, noAuth)
 	if err != nil {
-		log.Fatalf("sb: %v", err)
+		fatal("%v", err)
 	}
-	waitReady(workerPort)
+	waitReady(w)
 
-	// Phase 1: proxy everything to the single worker. Phase 2 mounts workers
-	// under /w/<id>/ and serves a unified shell.
-	target, _ := url.Parse("http://127.0.0.1:" + workerPort)
-	proxy := httputil.NewSingleHostReverseProxy(target)
-
-	log.Printf("sb: coordinator on http://localhost:%s/", *port)
-	log.Printf("sb: project %q → worker %s (127.0.0.1:%s)", id, container(id), workerPort)
-	if err := http.ListenAndServe(":"+*port, proxy); err != nil {
-		log.Fatal(err)
+	co := newCoordinator(port)
+	co.reg.put(w)
+	co.reg.reconcile() // adopt any other already-running workers
+	ui.Info("sb", "project %q → worker %s (api 127.0.0.1:%s)", id, w.Container, w.APIPort)
+	if err := co.Run(); err != nil {
+		fatal("%v", err)
 	}
 }
 
-func container(id string) string { return "sb_" + id }
-func volume(id string) string    { return "sb_" + id + "_vol" }
-
-// ensureWorker starts (or reuses) the worker container and returns its
-// loopback-published host port for :7000.
-func ensureWorker(id, project string, noAuth bool) (string, error) {
-	c := container(id)
-	if running(c) {
-		log.Printf("sb: reusing worker %s", c)
-		return hostPort(c)
-	}
-	_ = exec.Command("docker", "rm", "-f", c).Run() // clear a stopped one
-	args := []string{
-		"run", "-d", "--name", c,
-		"--label", "slopbox.id=" + id, "--label", "slopbox.project=" + project,
-		"-v", project + ":/work",
-		"-v", volume(id) + ":/home/ubuntu",
-		"-p", "127.0.0.1:0:7000", // loopback only; the coordinator fronts it
-		"-e", "SLOPBOX_REPO=/work", "-e", "SLOP_ID=" + id,
-	}
-	if noAuth {
-		args = append(args, "-e", "SLOPBOX_NO_AUTH=1")
-	}
-	args = append(args, workerImage)
-	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("start worker: %s", strings.TrimSpace(string(out)))
-	}
-	log.Printf("sb: started worker %s", c)
-	return hostPort(c)
-}
-
-func hostPort(c string) (string, error) {
-	out, err := exec.Command("docker", "inspect", "-f",
-		`{{(index (index .NetworkSettings.Ports "7000/tcp") 0).HostPort}}`, c).Output()
-	if err != nil {
-		return "", fmt.Errorf("inspect port: %w", err)
-	}
-	p := strings.TrimSpace(string(out))
-	if p == "" {
-		return "", fmt.Errorf("worker %s has no published port yet", c)
-	}
-	return p, nil
-}
-
-func waitReady(port string) {
-	for i := 0; i < 60; i++ {
-		if resp, err := http.Get("http://127.0.0.1:" + port + "/api/info"); err == nil {
-			resp.Body.Close()
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-}
-
-func running(c string) bool {
-	out, _ := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", c).Output()
-	return strings.TrimSpace(string(out)) == "true"
-}
-
-func imageExists(img string) bool {
-	return exec.Command("docker", "image", "inspect", img).Run() == nil
-}
-
-func isGitRepo(dir string) bool {
-	return exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree").Run() == nil
-}
-
-// boxID is the project's id: `id` in .slopbox.toml, else the folder name.
-func boxID(project string) string {
-	for _, f := range []string{".slopbox.toml", ".slopbox.local.toml"} {
-		b, err := os.ReadFile(filepath.Join(project, f))
-		if err != nil {
-			continue
-		}
-		for _, ln := range strings.Split(string(b), "\n") {
-			ln = strings.TrimSpace(ln)
-			if strings.HasPrefix(ln, "id") {
-				if i := strings.Index(ln, "="); i >= 0 {
-					if v := strings.Trim(strings.TrimSpace(ln[i+1:]), `"' `); v != "" {
-						return v
-					}
-				}
-			}
-		}
-	}
-	return filepath.Base(project)
+func fatal(format string, a ...any) {
+	ui.Warn("sb", format, a...)
+	os.Exit(1)
 }
