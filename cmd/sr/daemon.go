@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -65,10 +66,11 @@ func liveCoordinator(dir string) (*coordMeta, bool) {
 	return &m, resp.StatusCode == 200
 }
 
-// runDaemon is the detached coordinator process (sr __daemon). It single-
-// instances via an exclusive flock, serves the UI + control socket, and exits if
-// another daemon already holds the lock.
-func runDaemon(dir, port string, noAuth, tailnet bool) {
+// runDaemon is the coordinator process. Normally it's the detached daemon (sr
+// __daemon); with initProject set it's the foreground `sr --fg` dev mode, which
+// also registers that project and tears it down on Ctrl-C. It single-instances
+// via an exclusive flock and exits if another coordinator already holds it.
+func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage string) {
 	lf, err := os.OpenFile(lockPath(dir), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		fatal("daemon lock: %v", err)
@@ -118,6 +120,32 @@ func runDaemon(dir, port string, noAuth, tailnet bool) {
 	if ts != nil {
 		go serveTailnetUI(co, ts)
 	}
+
+	// Foreground dev mode: register this project now and stop it on Ctrl-C.
+	if initProject != "" {
+		id := boxID(initProject)
+		w, werr := ensureWorker(id, initProject, initImage)
+		if werr != nil {
+			fatal("%v", werr)
+		}
+		waitReady(w)
+		co.reg.put(w)
+		co.act.touch(id)
+		go co.autoMap(w)
+		url := fmt.Sprintf("http://127.0.0.1:%s/w/%s/", port, id)
+		ui.Info("sr", "project %q → worker %s", id, w.Container)
+		openBrowser(url)
+		go func() {
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+			<-sig
+			ui.Info("sr", "stopping %s…", id)
+			co.pm.CloseWorker(id)
+			_, _ = dockerRun("stop", w.Container)
+			os.Exit(0)
+		}()
+	}
+
 	if err := co.Run(sockPath(dir)); err != nil {
 		fatal("%v", err)
 	}

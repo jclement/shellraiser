@@ -35,12 +35,13 @@ description = "Run the v2 multi-project coordinator end-to-end test"
 run = "bash test/e2e/coordinator.sh"
 
 [tasks.dev]
-description = "Build the image and run a box in the foreground (--rm, live logs)"
-run = "./shellraiser.sh start --rebuild --fg"
+description = "Run the coordinator in the foreground for the current repo (live logs, Ctrl-C tears it down)"
+depends = ["build"]
+run = "dist/sr --fg"
 
 [tasks.nuke]
-description = "Nuke this repo's box + its persistent volume/state"
-run = "./shellraiser.sh nuke"
+description = "Nuke this repo's worker (container + volume + network)"
+run = "go run ./cmd/sr nuke \"$(basename \"$PWD\")\""
 
 [tasks.package]
 description = "Snapshot release build (goreleaser, no publish)"

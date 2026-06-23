@@ -62,7 +62,8 @@ func usage() {
   sr doctor       preflight checks (docker, image, perms)
   sr help         this message
 
-flags (for bare sr): --no-auth, --port <p>, --tailnet (expose UI on the tailnet)
+flags (for bare sr): --no-auth, --port <p>, --tailnet (expose UI on the tailnet),
+                     --fg (run the coordinator in the foreground; live logs, Ctrl-C stops)
 `)
 }
 
@@ -70,7 +71,7 @@ flags (for bare sr): --no-auth, --port <p>, --tailnet (expose UI on the tailnet)
 // registered as a worker, then serve. (Pre-daemon: this process IS the
 // coordinator and adopts every other managed worker via reconcile.)
 func cmdUp(args []string) {
-	var noAuth, tailnet bool
+	var noAuth, tailnet, fg bool
 	port := "" // empty → a stable random high port (persisted in the global config)
 	project := ""
 	for i := 0; i < len(args); i++ {
@@ -79,6 +80,8 @@ func cmdUp(args []string) {
 			noAuth = true
 		case "--tailnet":
 			tailnet = true
+		case "--fg":
+			fg = true
 		case "--port":
 			if i+1 < len(args) {
 				i++
@@ -120,6 +123,15 @@ func cmdUp(args []string) {
 	if err != nil {
 		fatal("%v", err)
 	}
+
+	// Foreground dev mode: run the coordinator in THIS process (live logs,
+	// Ctrl-C tears the worker down), with this project registered. Refuses if a
+	// detached coordinator already holds the lock.
+	if fg {
+		runDaemon(dir, port, noAuth, tailnet, project, image)
+		return
+	}
+
 	m, err := ensureCoordinator(dir, port, noAuth, tailnet)
 	if err != nil {
 		fatal("%v", err)
@@ -154,7 +166,7 @@ func cmdDaemon(args []string) {
 	if err != nil {
 		fatal("%v", err)
 	}
-	runDaemon(dir, port, noAuth, tailnet)
+	runDaemon(dir, port, noAuth, tailnet, "", "")
 }
 
 // cmdDown stops every worker and shuts the coordinator down (end of day).
