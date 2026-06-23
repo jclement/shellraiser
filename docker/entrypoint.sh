@@ -36,12 +36,25 @@ ensure_gatecrash() {
   run_user sh -c "mkdir -p \$HOME/.local/bin && curl -fsSL 'https://github.com/jclement/gatecrash/releases/latest/download/gatecrash_linux_$(dpkg --print-architecture)' -o \$HOME/.local/bin/gatecrash && chmod +x \$HOME/.local/bin/gatecrash"
 }
 
-# 1. Seed dotfiles into the (possibly empty) persistent home mount.
+# 1. Seed the (possibly empty / foreign-owned) persistent home mount. Make the
+#    home root + the standard XDG dirs ubuntu-owned so the ubuntu user can write
+#    there (mise, code-server, etc. install into them). We chown those dirs
+#    NON-recursively so we never recurse into the symlink-laden code-server tree
+#    (~/.local/lib) or the large mise installs — under `set -e` that chown's
+#    non-zero exit would otherwise abort the whole entrypoint.
+chown "$USERNAME:$USERNAME" "$HOME_DIR" 2>/dev/null || true
+mkdir -p "$HOME_DIR/.local/bin" "$HOME_DIR/.local/share/slopbox" "$HOME_DIR/.local/state" \
+         "$HOME_DIR/.config" "$HOME_DIR/.cache" "$HOME_DIR/worktrees" "$HOME_DIR/linuxbrew"
+chown "$USERNAME:$USERNAME" \
+  "$HOME_DIR/.local" "$HOME_DIR/.local/share" "$HOME_DIR/.local/state" \
+  "$HOME_DIR/.config" "$HOME_DIR/.cache" "$HOME_DIR/linuxbrew" 2>/dev/null || true
+chown -R "$USERNAME:$USERNAME" \
+  "$HOME_DIR/.local/bin" "$HOME_DIR/.local/share/slopbox" "$HOME_DIR/worktrees" 2>/dev/null || true
+
 if [ ! -f "$HOME_DIR/.zshrc" ] && [ -f /etc/skel/.zshrc ]; then
   cp /etc/skel/.zshrc "$HOME_DIR/.zshrc"
+  chown "$USERNAME:$USERNAME" "$HOME_DIR/.zshrc" 2>/dev/null || true
 fi
-mkdir -p "$HOME_DIR/worktrees" "$HOME_DIR/.local/bin" "$HOME_DIR/.config" \
-         "$HOME_DIR/.local/share/slopbox" "$HOME_DIR/linuxbrew"
 
 # Keep Homebrew's data under the home mount while preserving the standard prefix
 # path (so prebuilt bottles still apply): symlink /home/linuxbrew → home mount.
@@ -49,7 +62,6 @@ if [ ! -L /home/linuxbrew ]; then
   rm -rf /home/linuxbrew
   ln -s "$HOME_DIR/linuxbrew" /home/linuxbrew
 fi
-chown -R "$USERNAME:$USERNAME" "$HOME_DIR"
 
 # 2. Postgres + pgweb (default on; SLOPBOX_POSTGRES=0 to disable). Fully
 #    non-fatal: if the data dir can't be secured (e.g. a Docker Desktop bind
@@ -100,15 +112,23 @@ if [ -f /work/Brewfile ] && [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
   run_user bash -lc 'cd /work && brew bundle --file=/work/Brewfile' || echo "slopbox: brew bundle had issues"
 fi
 
-# 2c. code-server at /edit (default on; SLOPBOX_CODE_SERVER=0 to disable).
-if [ "${SLOPBOX_CODE_SERVER:-1}" != "0" ] && ensure_code_server; then
+# 2c. code-server at /edit (default on; SLOPBOX_CODE_SERVER=0 to disable). Run
+#     the (slow, first-time) install + start in the background so the web UI
+#     comes up immediately instead of blocking on the code-server download.
+start_code_server() {
+  ensure_code_server || { echo "slopbox: ⚠ code-server install failed — /edit disabled"; return; }
   CS_DIR="$HOME_DIR/.local/share/code-server"
-  mkdir -p "$CS_DIR/extensions" "$CS_DIR/User"
-  # Disable the welcome/getting-started tab + telemetry (only seed once).
+  # Create dirs + seed settings AS the ubuntu user so nothing is root-owned and
+  # no chown of the (symlink-laden) code-server tree is needed.
+  run_user mkdir -p "$CS_DIR/extensions" "$CS_DIR/User"
   if [ ! -f "$CS_DIR/User/settings.json" ]; then
-    printf '{\n  "workbench.startupEditor": "none",\n  "telemetry.telemetryLevel": "off"\n}\n' > "$CS_DIR/User/settings.json"
+    run_user sh -c 'cat > "$HOME/.local/share/code-server/User/settings.json"' <<'JSON'
+{
+  "workbench.startupEditor": "none",
+  "telemetry.telemetryLevel": "off"
+}
+JSON
   fi
-  chown -R "$USERNAME:$USERNAME" "$CS_DIR"
   echo "slopbox: starting code-server at /edit"
   run_user code-server --bind-addr 127.0.0.1:8082 --auth none --disable-telemetry \
     --user-data-dir "$CS_DIR" --extensions-dir "$CS_DIR/extensions" \
@@ -119,7 +139,8 @@ if [ "${SLOPBOX_CODE_SERVER:-1}" != "0" ] && ensure_code_server; then
         --extensions-dir "$CS_DIR/extensions" >/dev/null 2>&1 \
       && run_user touch "$CS_DIR/extensions/.gitlens-done" ) &
   fi
-fi
+}
+[ "${SLOPBOX_CODE_SERVER:-1}" != "0" ] && start_code_server &
 
 # 3. If the docker socket was passed through, let 'ubuntu' use it.
 if [ -S /var/run/docker.sock ]; then
