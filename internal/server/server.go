@@ -30,6 +30,7 @@ type Server struct {
 	cfg          config.Config
 	mgr          *session.Manager
 	auth         *auth.Manager
+	colors       *colorStore
 	commands     map[string]config.Command
 }
 
@@ -82,6 +83,7 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 		worktreesDir: worktreesDir,
 		cfg:          cfg,
 		auth:         am,
+		colors:       newColorStore(filepath.Join(authDir, "worktree-colors.json")),
 		commands:     commands,
 		mgr: session.NewManager(session.Commands{
 			Shell: cfg.Shell, Editor: cfg.Editor, Claude: cfg.Claude, Codex: cfg.Codex,
@@ -97,6 +99,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("GET /api/commands", s.handleCommands)
 	mux.HandleFunc("GET /api/worktrees", s.handleListWorktrees)
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
+	mux.HandleFunc("POST /api/worktrees/color", s.handleSetWorktreeColor)
 	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
@@ -237,7 +240,23 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	for i := range trees {
+		trees[i].Color = s.colors.get(trees[i].Path)
+	}
 	writeJSON(w, trees)
+}
+
+func (s *Server) handleSetWorktreeColor(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path  string `json:"path"`
+		Color string `json:"color"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	s.colors.set(req.Path, req.Color)
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {

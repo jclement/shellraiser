@@ -22,7 +22,9 @@ const ICONS = {
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
 };
+const WT_COLORS = ['', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
 function svg(name, cls = 'icon') { return `<svg class="${cls}" viewBox="0 0 24 24">${ICONS[name] || ''}</svg>`; }
 function fillIcons(root = document) {
   root.querySelectorAll('[data-icon]').forEach((e) => {
@@ -83,16 +85,31 @@ async function loadInfo() {
   db.onclick = () => window.open('/db/', '_blank');
 }
 
+const BUILTIN_LAUNCH = [
+  { kind: 'claude', icon: 'claude', label: 'claude' },
+  { kind: 'codex', icon: 'codex', label: 'codex' },
+  { kind: 'shell', icon: 'terminal', label: 'shell' },
+  { kind: 'editor', icon: 'pencil', label: 'editor' },
+];
+
 async function loadCommands() {
   try { state.commands = await api('GET', '/api/commands'); } catch (_) { state.commands = []; }
-  const box = $('#custom-cmds');
-  box.innerHTML = '';
-  for (const c of state.commands) {
-    const b = el('button', 'launch-btn btn shrink-0 px-2.5 py-1.5 text-sm');
-    b.innerHTML = svg('play', 'icon icon-sm') + `<span class="hidden sm:inline">${c.name}</span>`;
-    b.title = (c.args || []).join(' ');
-    b.onclick = () => launchCommand(c.name);
-    box.appendChild(b);
+  renderLaunchMenu();
+}
+
+function renderLaunchMenu() {
+  const menu = $('#launch-menu');
+  menu.innerHTML = '';
+  const item = (icon, label, onClick) => {
+    const b = el('button', 'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-app hover-row');
+    b.innerHTML = svg(icon, 'icon icon-sm') + `<span>${label}</span>`;
+    b.onclick = () => { menu.classList.add('hidden'); onClick(); };
+    return b;
+  };
+  for (const b of BUILTIN_LAUNCH) menu.appendChild(item(b.icon, b.label, () => launch(b.kind)));
+  if (state.commands.length) {
+    menu.appendChild(el('div', 'my-1 border-t border-app'));
+    for (const c of state.commands) menu.appendChild(item('play', c.name, () => launchCommand(c.name)));
   }
 }
 
@@ -173,25 +190,37 @@ function renderWorktrees() {
   nav.innerHTML = '';
   for (const w of state.worktrees) {
     const sel = w.path === state.selected;
-    const row = el('div', `group mb-0.5 cursor-pointer rounded-md px-2 py-1.5 transition ${sel ? 'row-sel' : 'hover-row'}`);
+    const row = el('div', `group relative mb-0.5 cursor-pointer rounded-md px-2 py-1.5 transition ${sel ? 'row-sel' : 'hover-row'}`);
+    if (w.color) row.style.borderLeft = `3px solid ${w.color}`;
+    row.style.paddingLeft = w.color ? '0.4rem' : '';
     const top = el('div', 'flex items-center gap-2');
-    const ic = el('span', 'text-faint'); ic.innerHTML = svg('branch', 'icon icon-sm'); top.appendChild(ic);
+    const ic = el('span', ''); ic.style.color = w.color || cssVar('--faint'); ic.innerHTML = svg('branch', 'icon icon-sm'); top.appendChild(ic);
     const name = el('span', 'truncate text-sm ' + (sel ? 'text-app font-medium' : 'text-muted'), w.name);
     top.appendChild(name);
     top.appendChild(gitBadge(w));
+    // hover actions: color · edit · delete
+    const actions = el('span', 'ml-1 flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100');
+    const colorBtn = el('button', 'iconbtn px-1'); colorBtn.title = 'Color';
+    colorBtn.innerHTML = `<span class="inline-block h-3 w-3 rounded-full" style="background:${w.color || 'transparent'};box-shadow:inset 0 0 0 1px var(--border)"></span>`;
+    colorBtn.onclick = (ev) => { ev.stopPropagation(); openColorPicker(w, colorBtn); };
+    actions.appendChild(colorBtn);
     if (state.info && state.info.editor) {
-      const edit = el('button', 'iconbtn shrink-0 px-1');
-      edit.innerHTML = svg('pencil', 'icon icon-sm');
-      edit.title = 'Open in code-server';
+      const edit = el('button', 'iconbtn px-1'); edit.title = 'Open in code-server'; edit.innerHTML = svg('pencil', 'icon icon-sm');
       edit.onclick = (ev) => { ev.stopPropagation(); window.open('/edit/?folder=' + encodeURIComponent(w.path), '_blank'); };
-      top.appendChild(edit);
+      actions.appendChild(edit);
     }
+    if (!w.isMain) {
+      const del = el('button', 'iconbtn px-1'); del.title = 'Delete worktree'; del.innerHTML = svg('trash', 'icon icon-sm');
+      del.onclick = (ev) => { ev.stopPropagation(); deleteWorktree(w); };
+      actions.appendChild(del);
+    }
+    top.appendChild(actions);
     row.appendChild(top);
     const branch = el('div', 'truncate pl-6 text-[11px] text-faint', w.detached ? `detached @ ${(w.head || '').slice(0, 7)}` : (w.branch || ''));
     row.appendChild(branch);
     const meta = gitMeta(w);
     if (meta) { const m = el('div', 'flex flex-wrap items-center gap-1.5 pl-6 pt-0.5 text-[11px]'); m.innerHTML = meta; row.appendChild(m); }
-    row.onclick = () => { state.selected = w.path; renderWorktrees(); renderContext(); };
+    row.onclick = () => selectWorktree(w.path);
     row.ondblclick = () => maybeCloseSidebar();
 
     // nested sessions for this worktree
@@ -203,14 +232,6 @@ function renderWorktrees() {
       k.appendChild(el('span', 'truncate text-app', s.title));
       k.onclick = (ev) => { ev.stopPropagation(); openTab(s); };
       row.appendChild(k);
-    }
-
-    // ports owned by processes running under this worktree
-    const wtPorts = state.ports.filter((p) => p.worktree === w.path);
-    if (wtPorts.length) {
-      const pwrap = el('div', 'ml-4 mt-1 flex flex-wrap gap-1');
-      for (const p of wtPorts) pwrap.appendChild(portChip(p));
-      row.appendChild(pwrap);
     }
     nav.appendChild(row);
   }
@@ -230,8 +251,7 @@ function renderContext() {
 function renderTabs() {
   const bar = $('#tabs');
   bar.innerHTML = '';
-  $('#empty-state').style.display = state.tabs.length ? 'none' : 'flex';
-  for (const id of state.tabs) {
+  for (const id of tabsForSelected()) {
     const s = state.sessions.find((x) => x.id === id) || { id, title: '?', kind: 'shell', state: 'exited' };
     const act = id === state.active;
     const tab = el('div', `flex cursor-pointer items-center gap-2 border-r border-app px-3 py-2 ${act ? 'bg-app text-app' : 'bg-panel text-muted hover-row'}`);
@@ -256,13 +276,13 @@ function portChip(p) {
 }
 
 function renderPorts() {
-  // The bottom panel shows ports NOT attributed to a worktree (system/other).
+  // Scoped to the selected worktree: only ports owned by a process running there.
   const box = $('#ports');
   box.innerHTML = '';
-  const sys = state.ports.filter((p) => !p.worktree);
-  $('#ports-count').textContent = state.ports.length ? state.ports.length : '';
-  if (!sys.length) { box.appendChild(el('div', 'col-span-3 text-faint', 'none')); return; }
-  for (const p of sys) box.appendChild(portChip(p));
+  const mine = state.ports.filter((p) => p.worktree && p.worktree === state.selected);
+  $('#ports-count').textContent = mine.length ? mine.length : '';
+  if (!mine.length) { box.appendChild(el('div', 'col-span-3 text-faint', 'none')); return; }
+  for (const p of mine) box.appendChild(portChip(p));
 }
 
 // ---- sessions & terminals -------------------------------------------------
@@ -300,9 +320,26 @@ function setActive(id) {
   for (const [tid, t] of Object.entries(state.terms)) {
     t.host.classList.toggle('hidden', tid !== id);
   }
+  $('#empty-state').style.display = id ? 'none' : 'flex';
   const t = state.terms[id];
   if (t) { requestAnimationFrame(() => { fit(t); t.term.focus(); }); }
   renderTabs();
+}
+
+// Tabs/terminals are scoped to the selected worktree.
+function sessionCwd(id) {
+  const t = state.terms[id];
+  if (t && t.cwd) return t.cwd;
+  const s = state.sessions.find((x) => x.id === id);
+  return s ? s.cwd : null;
+}
+function tabsForSelected() { return state.tabs.filter((id) => sessionCwd(id) === state.selected); }
+
+function selectWorktree(path) {
+  state.selected = path;
+  renderWorktrees(); renderContext(); renderPorts();
+  const tabs = tabsForSelected();
+  setActive(tabs.includes(state.active) ? state.active : (tabs[tabs.length - 1] || null));
 }
 
 function ensureTerm(s) {
@@ -327,7 +364,7 @@ function ensureTerm(s) {
   try { term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch (_) {}
   term.open(host);
 
-  const rec = { term, fit: fitAddon, ws: null, host };
+  const rec = { term, fit: fitAddon, ws: null, host, cwd: s.cwd };
   state.terms[s.id] = rec;
   fit(rec);
   connectWS(s.id);
@@ -360,9 +397,11 @@ async function killSession(id) {
   const rec = state.terms[id];
   if (rec) { if (rec.ws) rec.ws.close(); rec.term.dispose(); rec.host.remove(); delete state.terms[id]; }
   state.tabs = state.tabs.filter((t) => t !== id);
-  if (state.active === id) state.active = state.tabs[state.tabs.length - 1] || null;
   await loadSessions();
-  if (state.active) setActive(state.active); else renderTabs();
+  if (state.active === id) {
+    const tabs = tabsForSelected();
+    setActive(tabs[tabs.length - 1] || null);
+  } else { renderTabs(); }
 }
 
 // ---- live status (SSE) + ding --------------------------------------------
@@ -423,6 +462,51 @@ async function newWorktree() {
   } catch (e) { toast(e.message); }
 }
 
+function openColorPicker(w, anchor) {
+  document.querySelectorAll('.color-pop').forEach((e) => e.remove());
+  const pop = el('div', 'color-pop fixed z-50 flex gap-1.5 rounded-md border border-app bg-panel p-2 shadow-lg');
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${r.left}px`; pop.style.top = `${r.bottom + 4}px`;
+  for (const c of WT_COLORS) {
+    const sw = el('button', 'flex h-5 w-5 items-center justify-center rounded-full text-xs text-faint');
+    sw.style.background = c || 'transparent';
+    sw.style.boxShadow = 'inset 0 0 0 1px var(--border)';
+    if (!c) sw.textContent = '∅';
+    sw.onclick = async (ev) => {
+      ev.stopPropagation();
+      try { await api('POST', '/api/worktrees/color', { path: w.path, color: c }); w.color = c; renderWorktrees(); }
+      catch (e) { toast(e.message); }
+      pop.remove();
+    };
+    pop.appendChild(sw);
+  }
+  document.body.appendChild(pop);
+  setTimeout(() => document.addEventListener('click', function h() { pop.remove(); document.removeEventListener('click', h); }), 0);
+}
+
+async function deleteWorktree(w) {
+  const warn = [];
+  if (w.dirty) warn.push('uncommitted changes');
+  if (w.aheadOrigin > 0) warn.push(`${w.aheadOrigin} UNPUSHED commit${w.aheadOrigin === 1 ? '' : 's'}`);
+  let msg = `Delete worktree "${w.name}" and remove its folder from disk?`;
+  if (warn.length) msg = `⚠  WARNING\n\n"${w.name}" has ${warn.join(' and ')}.\nThis work will be PERMANENTLY LOST.\n\nDelete anyway?`;
+  if (!confirm(msg)) return;
+  try {
+    // stop any sessions running in this worktree first
+    for (const s of state.sessions.filter((x) => x.cwd === w.path)) {
+      try { await api('DELETE', `/api/sessions/${s.id}`); } catch (_) {}
+      const rec = state.terms[s.id];
+      if (rec) { if (rec.ws) rec.ws.close(); rec.term.dispose(); rec.host.remove(); delete state.terms[s.id]; }
+      state.tabs = state.tabs.filter((t) => t !== s.id);
+    }
+    await api('DELETE', '/api/worktrees', { path: w.path, force: true });
+    if (state.selected === w.path) state.selected = state.info.repoDir;
+    await loadWorktrees(); await loadSessions();
+    selectWorktree(state.selected);
+    toast(`Deleted worktree ${w.name}`, 'ok');
+  } catch (e) { toast(e.message); }
+}
+
 // ---- wiring ---------------------------------------------------------------
 
 function isMobile() { return window.innerWidth < 768; }
@@ -441,12 +525,11 @@ function applyTheme(t) {
 function setTheme(t) { localStorage.setItem('slopbox-theme', t); applyTheme(t); }
 
 function wire() {
-  document.querySelectorAll('[data-launch]').forEach((b) => {
-    b.onclick = () => launch(b.getAttribute('data-launch'));
-  });
   $('#new-worktree').onclick = newWorktree;
   $('#menu-btn').onclick = () => ($('#sidebar').classList.contains('-translate-x-full') ? openSidebar() : closeSidebar());
   $('#backdrop').onclick = closeSidebar;
+  $('#add-tab').onclick = (e) => { e.stopPropagation(); $('#launch-menu').classList.toggle('hidden'); };
+  document.addEventListener('click', () => $('#launch-menu').classList.add('hidden'));
   document.querySelectorAll('[data-theme]').forEach((b) => { b.onclick = () => setTheme(b.dataset.theme); });
   applyTheme(currentTheme());
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (currentTheme() === 'system') applyTheme('system'); });

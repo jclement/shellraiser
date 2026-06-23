@@ -21,6 +21,7 @@ type Worktree struct {
 	Bare     bool   `json:"bare"`
 	Locked   bool   `json:"locked"`
 	IsMain   bool   `json:"isMain"`
+	Color    string `json:"color"` // UI color tag (set by the server, not git)
 
 	// Stats (relative to the main worktree's branch, and to the upstream).
 	Added        int  `json:"added"`        // lines added (committed vs base + uncommitted)

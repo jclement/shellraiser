@@ -120,6 +120,7 @@
         <button class="seg" data-theme="light" title="Light theme"><span data-icon="sun" class="icon-sm"></span></button>
         <button class="seg" data-theme="dark" title="Dark theme"><span data-icon="moon" class="icon-sm"></span></button>
         <div class="ml-auto flex items-center gap-1">
+          <button id="db-btn" class="iconbtn hidden p-1" title="Database (pgweb)"><span data-icon="database" class="icon-sm"></span></button>
           <button id="add-passkey" class="iconbtn hidden p-1" title="Add a passkey"><span data-icon="key" class="icon-sm"></span></button>
           <button id="logout" class="iconbtn hidden p-1" title="Sign out"><span data-icon="logout" class="icon-sm"></span></button>
         </div>
@@ -130,20 +131,16 @@
     <main class="flex min-w-0 flex-1 flex-col bg-app">
       <div class="flex items-center gap-2 border-b border-app bg-panel px-2 py-2 sm:px-3">
         <button id="menu-btn" class="iconbtn shrink-0 p-1.5 md:hidden" aria-label="Toggle worktrees"><span data-icon="menu"></span></button>
-        <div id="active-context" class="mr-1 hidden min-w-0 items-center gap-2 text-sm sm:flex">
+        <div id="active-context" class="flex min-w-0 items-center gap-2 text-sm">
           <span class="text-muted">Select a worktree</span>
-        </div>
-        <div class="ml-auto flex shrink-0 items-center gap-1.5 overflow-x-auto">
-          <button data-launch="claude" data-icon="claude" class="launch-btn btn shrink-0 px-2.5 py-1.5 text-sm"><span class="hidden sm:inline">claude</span></button>
-          <button data-launch="codex" data-icon="codex" class="launch-btn btn shrink-0 px-2.5 py-1.5 text-sm"><span class="hidden sm:inline">codex</span></button>
-          <button data-launch="shell" data-icon="terminal" class="launch-btn btn shrink-0 px-2.5 py-1.5 text-sm"><span class="hidden sm:inline">shell</span></button>
-          <button data-launch="editor" data-icon="pencil" class="launch-btn btn shrink-0 px-2.5 py-1.5 text-sm"><span class="hidden sm:inline">editor</span></button>
-          <span id="custom-cmds" class="contents"></span>
-          <button id="db-btn" data-icon="database" class="btn hidden shrink-0 px-2.5 py-1.5 text-sm" title="Open pgweb"><span class="hidden sm:inline">db</span></button>
         </div>
       </div>
 
-      <div id="tabs" class="flex items-stretch gap-px overflow-x-auto border-b border-app bg-panel text-sm"></div>
+      <div class="relative flex items-stretch border-b border-app bg-panel text-sm">
+        <div id="tabs" class="flex min-w-0 flex-1 items-stretch gap-px overflow-x-auto"></div>
+        <button id="add-tab" class="iconbtn shrink-0 border-l border-app px-3" title="New session" data-icon="plus"></button>
+        <div id="launch-menu" class="absolute right-1 top-full z-40 mt-1 hidden min-w-[11rem] rounded-md border border-app bg-panel py-1 shadow-lg"></div>
+      </div>
 
       <div id="term-area" class="relative flex-1 overflow-hidden bg-app">
         <div id="empty-state" class="flex h-full flex-col items-center justify-center gap-2 text-center text-faint">

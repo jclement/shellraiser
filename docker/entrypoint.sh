@@ -81,7 +81,12 @@ fi
 # 2c. code-server at /edit (default on; SLOPBOX_CODE_SERVER=0 to disable).
 if [ "${SLOPBOX_CODE_SERVER:-1}" != "0" ] && command -v code-server >/dev/null 2>&1; then
   CS_DIR="$HOME_DIR/.local/share/code-server"
-  mkdir -p "$CS_DIR/extensions"; chown -R "$USERNAME:$USERNAME" "$CS_DIR"
+  mkdir -p "$CS_DIR/extensions" "$CS_DIR/User"
+  # Disable the welcome/getting-started tab + telemetry (only seed once).
+  if [ ! -f "$CS_DIR/User/settings.json" ]; then
+    printf '{\n  "workbench.startupEditor": "none",\n  "telemetry.telemetryLevel": "off"\n}\n' > "$CS_DIR/User/settings.json"
+  fi
+  chown -R "$USERNAME:$USERNAME" "$CS_DIR"
   echo "slopbox: starting code-server at /edit"
   run_user code-server --bind-addr 127.0.0.1:8082 --auth none --disable-telemetry \
     --user-data-dir "$CS_DIR" --extensions-dir "$CS_DIR/extensions" \

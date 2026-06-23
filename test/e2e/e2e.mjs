@@ -27,7 +27,8 @@ const browser = await chromium.launch();
   await page.waitForFunction(() => /\w/.test(document.querySelector('#worktrees')?.textContent || ''), { timeout: 10000 });
   check('worktree list renders', true);
 
-  await page.click('[data-launch="shell"]');
+  await page.click('#add-tab');
+  await page.click('#launch-menu >> text=shell');
   await page.waitForSelector('.xterm', { timeout: 8000 });
   await page.waitForTimeout(1500);
   const termText = await page.evaluate(() => {
