@@ -109,8 +109,17 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 	}, nil
 }
 
-// Run starts serving and blocks.
-func (s *Server) Run() error {
+// Handler returns the routed worker mux WITHOUT the token/auth gate, plus starts
+// the event logger. The coordinator uses this to mount a "bare metal" worker
+// in-process (no container) — auth is enforced by the coordinator before it
+// dispatches here.
+func (s *Server) Handler() http.Handler {
+	go s.logEvents()
+	return s.buildMux()
+}
+
+// buildMux wires every worker route (shared by Run and Handler).
+func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/info", s.handleInfo)
@@ -170,7 +179,12 @@ func (s *Server) Run() error {
 
 	s.auth.Mount(mux)
 	mux.HandleFunc("/", s.handleStatic)
+	return mux
+}
 
+// Run starts serving and blocks (the in-container worker entrypoint).
+func (s *Server) Run() error {
+	mux := s.buildMux()
 	ui.Banner()
 	ui.Boot("shellraiser",
 		"repo", filepath.Base(s.repoDir),
@@ -183,6 +197,9 @@ func (s *Server) Run() error {
 
 	return http.ListenAndServe(s.cfg.Addr, s.gate(mux))
 }
+
+// Shutdown kills every session (used when a bare-metal worker is removed).
+func (s *Server) Shutdown() { s.mgr.KillAll() }
 
 // gate enforces auth on data/proxy routes while leaving the static UI and the
 // /api/auth/* endpoints public (the SPA gates itself via /api/auth/status).

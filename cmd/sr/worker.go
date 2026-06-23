@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,9 +14,11 @@ import (
 	"strings"
 
 	"github.com/jclement/shellraiser/internal/config"
+	"github.com/jclement/shellraiser/internal/server"
 )
 
-// Worker is one project's backend container, fronted by the coordinator.
+// Worker is one project's backend, fronted by the coordinator. Normally a
+// container; with BareMetal it's an in-process server running on the host.
 type Worker struct {
 	ID        string // sr container/volume identity
 	Project   string // absolute path of the project (git repo) on the host
@@ -27,6 +30,42 @@ type Worker struct {
 	SSHPort   string // loopback host port → container :22 (Phase 3)
 	Token     string // SHELLRAISER_WORKER_TOKEN injected at run; required on every proxied hop
 	State     string // docker State.Status: running | exited | …
+
+	// Bare-metal (no container): the worker runs in the coordinator process,
+	// serving handler directly against the project on disk.
+	BareMetal bool
+	handler   http.Handler
+	srv       *server.Server
+}
+
+// provisionWorker creates a worker for project — bare-metal (in-process) when the
+// project opts in, else a hardened container.
+func provisionWorker(id, project, image string) (*Worker, error) {
+	cfg, _ := config.Load(project)
+	if cfg.BareMetal {
+		return newBareWorker(id, project, cfg)
+	}
+	return ensureWorker(id, project, image)
+}
+
+// newBareWorker runs the worker in-process on the host — no container, no
+// isolation. Sessions are host processes in the real project dir; dev servers
+// bind host localhost (so /p/ and a plain localhost:<port> both work, no SSH
+// tunnel needed).
+func newBareWorker(id, project string, cfg config.Config) (*Worker, error) {
+	srv, err := server.New(project, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Worker{
+		ID:        id,
+		Project:   project,
+		Name:      filepath.Base(project),
+		State:     "running",
+		BareMetal: true,
+		srv:       srv,
+		handler:   srv.Handler(),
+	}, nil
 }
 
 // coordAuthKey is the coordinator's authorized_keys line, set by the daemon at
@@ -41,6 +80,19 @@ func ensureAgentsVolume() {
 	if exec.Command("docker", "volume", "inspect", agentsVolume).Run() != nil {
 		_, _ = dockerRun("volume", "create", agentsVolume)
 	}
+}
+
+func workerKind(w *Worker) string {
+	if w.BareMetal {
+		return "bare metal"
+	}
+	return "container " + w.Container
+}
+
+// isBareMetal reports whether a project opts out of containers.
+func isBareMetal(project string) bool {
+	cfg, _ := config.Load(project)
+	return cfg.BareMetal
 }
 
 // sshGitMounts returns the docker -v/-e args for SSH/git passthrough, honoring

@@ -39,6 +39,7 @@ type Config struct {
 	Base           string `toml:"base"`
 	Dockerfile     string `toml:"dockerfile"`
 	IsolatedAgents bool   `toml:"isolated_agents"` // own agent-login volume (no sharing)
+	BareMetal      bool   `toml:"bare_metal"`      // run on the host (no container/isolation)
 
 	// Host port mappings published by shellraiser.sh on start (e.g. ["5137",
 	// "4000-4010"]). For HTTP, prefer the /p/<port>/ proxy — no publishing needed.
@@ -118,6 +119,9 @@ func mergeFile(c *Config, path string) error {
 	}
 	if md.IsDefined("isolated_agents") {
 		c.IsolatedAgents = f.IsolatedAgents
+	}
+	if md.IsDefined("bare_metal") {
+		c.BareMetal = f.BareMetal
 	}
 	if md.IsDefined("ports") {
 		c.Ports = f.Ports

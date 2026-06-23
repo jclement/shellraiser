@@ -124,24 +124,32 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 	// Foreground dev mode: register this project now and stop it on Ctrl-C.
 	if initProject != "" {
 		id := boxID(initProject)
-		w, werr := ensureWorker(id, initProject, initImage)
+		w, werr := provisionWorker(id, initProject, initImage)
 		if werr != nil {
 			fatal("%v", werr)
 		}
-		waitReady(w)
+		if !w.BareMetal {
+			waitReady(w)
+			go co.autoMap(w)
+		}
 		co.reg.put(w)
 		co.act.touch(id)
-		go co.autoMap(w)
 		url := fmt.Sprintf("http://127.0.0.1:%s/w/%s/", port, id)
-		ui.Info("sr", "project %q → worker %s", id, w.Container)
+		ui.Info("sr", "project %q ready (%s)", id, workerKind(w))
 		openBrowser(url)
 		go func() {
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 			<-sig
 			ui.Info("sr", "stopping %s…", id)
-			co.pm.CloseWorker(id)
-			_, _ = dockerRun("stop", w.Container)
+			if w.BareMetal {
+				if w.srv != nil {
+					w.srv.Shutdown()
+				}
+			} else {
+				co.pm.CloseWorker(id)
+				_, _ = dockerRun("stop", w.Container)
+			}
 			os.Exit(0)
 		}()
 	}

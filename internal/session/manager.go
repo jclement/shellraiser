@@ -161,6 +161,19 @@ func (m *Manager) Roots() map[int]Info {
 }
 
 // Kill terminates and forgets a session.
+// KillAll terminates every session (used when a bare-metal worker is removed).
+func (m *Manager) KillAll() {
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		_ = m.Kill(id)
+	}
+}
+
 func (m *Manager) Kill(id string) error {
 	m.mu.Lock()
 	s, ok := m.sessions[id]

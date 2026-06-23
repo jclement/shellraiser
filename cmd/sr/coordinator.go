@@ -87,6 +87,12 @@ func (c *Coordinator) handleWorker(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such project: "+id, http.StatusNotFound)
 		return
 	}
+	// Bare-metal: serve the in-process worker directly (no container, no proxy).
+	if worker.handler != nil {
+		c.act.touch(id)
+		http.StripPrefix("/w/"+id, worker.handler).ServeHTTP(w, r)
+		return
+	}
 	// Lazy-resume: a request to an idle-stopped worker transparently wakes it.
 	if worker.State != "running" || worker.APIPort == "" {
 		if !c.resume(worker) {
@@ -126,15 +132,17 @@ func (c *Coordinator) controlMux() *http.ServeMux {
 			return
 		}
 		id := boxID(req.Project)
-		worker, err := ensureWorker(id, req.Project, req.Image)
+		worker, err := provisionWorker(id, req.Project, req.Image)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		waitReady(worker) // don't hand back a URL until the worker actually serves
+		if !worker.BareMetal {
+			waitReady(worker)    // don't hand back a URL until the container serves
+			go c.autoMap(worker) // forward declared ports (bare-metal needs none)
+		}
 		c.reg.put(worker)
 		c.act.touch(id)
-		go c.autoMap(worker) // forward declared ports in the background
 		resp := map[string]any{
 			"id": id, "port": c.port,
 			"authEnabled": c.auth.Enabled(),
@@ -170,6 +178,18 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 	worker, ok := c.reg.get(id)
 	if !ok {
 		http.Error(w, "no such project", http.StatusNotFound)
+		return
+	}
+	// Bare-metal: no container — stop/nuke just kill the in-process sessions and
+	// drop it from the registry (re-register with `sr`).
+	if worker.BareMetal {
+		if action == "stop" || action == "nuke" {
+			if worker.srv != nil {
+				worker.srv.Shutdown()
+			}
+			c.reg.remove(id)
+		}
+		writeJSON(w, map[string]bool{"ok": true})
 		return
 	}
 	var err error
@@ -238,6 +258,11 @@ func (c *Coordinator) handlePortMap(w http.ResponseWriter, r *http.Request) {
 	worker, ok := c.reg.get(id)
 	if !ok {
 		http.Error(w, "no such project", http.StatusNotFound)
+		return
+	}
+	if worker.BareMetal {
+		// On bare metal the dev server already binds host localhost — nothing to tunnel.
+		writeJSON(w, map[string]any{"container": port, "host": port, "addr": "127.0.0.1:" + strconv.Itoa(port)})
 		return
 	}
 	switch action {

@@ -61,6 +61,9 @@ func (r *Registry) reconcile() {
 		}
 	}
 	for _, w := range r.list() {
+		if w.BareMetal {
+			continue // in-process, not docker-managed
+		}
 		if !live[w.ID] {
 			r.remove(w.ID)
 		}
