@@ -1,152 +1,86 @@
-// Package auth implements passkey (WebAuthn) authentication for shellraiser.
+// Package auth implements simple password authentication for the shellraiser
+// coordinator.
 //
-// Model: a single box owner with one or more passkeys. Because a WebAuthn
-// credential is bound to one RP ID (registrable domain), and shellraiser may be
-// reached via localhost AND one or more tunnel hostnames, credentials are
-// stored *per RP ID*, discovered from the request Host at registration time.
-// Registering a passkey on a host where you have none requires the bootstrap
-// code printed in the logs; once you hold a session you can add more.
+// Model: one password for the whole coordinator. Passkeys were dropped — they
+// bind to an origin (localhost vs the tailnet MagicDNS name), which made the
+// localhost↔tailnet story painful. A single password works identically on both.
+//
+// The password is a bcrypt hash in the global config. If none is set, a random
+// one-time password is generated and printed to the log at startup; you log in
+// with it and are prompted to set a real one (written back to the config).
 package auth
 
 import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-webauthn/webauthn/protocol"
-	"github.com/go-webauthn/webauthn/webauthn"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	sessionCookie  = "shellraiser_session"
-	ceremonyCookie = "shellraiser_cer"
-	sessionTTL     = 30 * 24 * time.Hour
-	ceremonyTTL    = 5 * time.Minute
+	sessionCookie = "shellraiser_session"
+	sessionTTL    = 30 * 24 * time.Hour
 )
-
-// storedCred is a credential plus the RP ID it was registered under.
-type storedCred struct {
-	RPID      string              `json:"rpId"`
-	Label     string              `json:"label"`
-	CreatedAt time.Time           `json:"createdAt"`
-	Cred      webauthn.Credential `json:"cred"`
-}
-
-type store struct {
-	UserID    []byte       `json:"userId"`
-	Bootstrap string       `json:"bootstrap"`
-	Creds     []storedCred `json:"creds"`
-}
-
-type ceremony struct {
-	session   webauthn.SessionData
-	rpID      string
-	label     string
-	bootstrap bool // gated by the bootstrap code (vs. an existing session)
-	expires   time.Time
-}
 
 // Manager holds auth state and serves the /api/auth/* endpoints.
 type Manager struct {
-	path       string
-	noAuth     bool
-	token      string                        // optional SHELLRAISER_TOKEN fallback for automation
-	rpOverride string                        // pinned RP ID (else discovered from Host)
-	Logf       func(format string, a ...any) // optional; for logging bootstrap rotation
+	noAuth bool
+	save   func(hash string) error       // persist a new bcrypt hash to global config
+	Logf   func(format string, a ...any) // optional
 
-	mu           sync.Mutex
-	data         store
-	sessions     map[string]time.Time
-	ceremonies   map[string]*ceremony
-	regFails     int       // consecutive bad bootstrap-code attempts
-	regLockUntil time.Time // registration locked until this time
+	mu        sync.Mutex
+	hash      string // bcrypt password hash ("" = no real password set yet)
+	temp      string // random one-time password, used until a real one is set
+	sessions  map[string]time.Time
+	fails     int
+	lockUntil time.Time
 }
 
 const (
-	maxBootstrapFails = 5
-	bootstrapLockout  = 5 * time.Minute
+	maxLoginFails = 8
+	loginLockout  = 1 * time.Minute
 )
 
-// bootstrapLocked reports whether registration is temporarily rate-limited.
-func (m *Manager) bootstrapLocked() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return time.Now().Before(m.regLockUntil)
-}
-
-// bootstrapResult records a bootstrap-code attempt, locking out after too many
-// consecutive failures.
-func (m *Manager) bootstrapResult(ok bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if ok {
-		m.regFails = 0
-		return
-	}
-	m.regFails++
-	if m.regFails >= maxBootstrapFails {
-		m.regLockUntil = time.Now().Add(bootstrapLockout)
-		m.regFails = 0
-	}
-}
-
-// New loads (or initializes) the auth store at path. rpOverride pins the
-// WebAuthn RP ID; when empty it is discovered from each request's Host.
-func New(path, token, rpOverride string, noAuth bool) (*Manager, error) {
+// New builds a Manager. passwordHash is the stored bcrypt hash (may be empty).
+// save persists a freshly-set hash to the global config. With no hash and auth
+// enabled, a random one-time password is minted for first login.
+func New(passwordHash string, save func(hash string) error, noAuth bool) *Manager {
 	m := &Manager{
-		path: path, token: token, rpOverride: rpOverride, noAuth: noAuth,
-		sessions: map[string]time.Time{}, ceremonies: map[string]*ceremony{},
+		noAuth: noAuth, hash: passwordHash, save: save,
+		sessions: map[string]time.Time{},
 	}
-	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &m.data)
+	if !noAuth && passwordHash == "" {
+		m.temp = randomPassword()
 	}
-	if len(m.data.UserID) == 0 {
-		m.data.UserID = randomBytes(16)
-	}
-	if m.data.Bootstrap == "" {
-		m.data.Bootstrap = randomCode()
-	}
-	return m, m.save()
-}
-
-// BootstrapCode returns the code that authorizes registering a new passkey.
-func (m *Manager) BootstrapCode() string { return m.data.Bootstrap }
-
-// HasCredentials reports whether any passkey is registered (on any host).
-func (m *Manager) HasCredentials() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.data.Creds) > 0
-}
-
-// rotateBootstrap issues a fresh bootstrap code after one is used, so a code
-// leaked via the logs can't be reused to enroll more passkeys.
-func (m *Manager) rotateBootstrap() {
-	m.mu.Lock()
-	m.data.Bootstrap = randomCode()
-	code := m.data.Bootstrap
-	_ = m.save()
-	m.mu.Unlock()
-	if m.Logf != nil {
-		m.Logf("bootstrap code used — new code: %s", code)
-	}
+	return m
 }
 
 // Enabled reports whether auth is enforced.
 func (m *Manager) Enabled() bool { return !m.noAuth }
 
-func (m *Manager) save() error {
-	b, _ := json.MarshalIndent(m.data, "", "  ")
-	return os.WriteFile(m.path, b, 0o600)
+// HasPassword reports whether a real (non-temporary) password is set.
+func (m *Manager) HasPassword() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.hash != ""
 }
 
-// Authenticated reports whether the request carries a valid session or token.
+// MustSetPassword reports whether the user still needs to choose a password.
+func (m *Manager) MustSetPassword() bool { return m.Enabled() && !m.HasPassword() }
+
+// TempPassword returns the one-time startup password (empty once a real one set).
+func (m *Manager) TempPassword() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.temp
+}
+
+// Authenticated reports whether the request carries a valid session.
 func (m *Manager) Authenticated(r *http.Request) bool {
 	if m.noAuth {
 		return true
@@ -154,15 +88,61 @@ func (m *Manager) Authenticated(r *http.Request) bool {
 	if c, err := r.Cookie(sessionCookie); err == nil && m.validSession(c.Value) {
 		return true
 	}
-	// Token fallback for automation — header only. We intentionally do NOT accept
-	// it as a ?t= query param: that leaks the credential into access logs,
-	// Referer headers, and browser history.
-	if m.token != "" {
-		if t := r.Header.Get("X-Shellraiser-Token"); t != "" && ctEq(t, m.token) {
-			return true
-		}
+	return false
+}
+
+// checkPassword constant-time-compares against the bcrypt hash, or the temp
+// password when no real one is set yet.
+func (m *Manager) checkPassword(pw string) bool {
+	m.mu.Lock()
+	hash, temp := m.hash, m.temp
+	m.mu.Unlock()
+	if hash != "" {
+		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
+	}
+	if temp != "" {
+		return subtle.ConstantTimeCompare([]byte(pw), []byte(temp)) == 1
 	}
 	return false
+}
+
+// SetPassword hashes and persists a new password, clearing the temp password.
+func (m *Manager) SetPassword(pw string) error {
+	if len(pw) < 6 {
+		return errTooShort
+	}
+	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.hash = string(h)
+	m.temp = ""
+	m.mu.Unlock()
+	if m.save != nil {
+		return m.save(string(h))
+	}
+	return nil
+}
+
+func (m *Manager) locked() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return time.Now().Before(m.lockUntil)
+}
+
+func (m *Manager) recordAttempt(ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ok {
+		m.fails = 0
+		return
+	}
+	m.fails++
+	if m.fails >= maxLoginFails {
+		m.lockUntil = time.Now().Add(loginLockout)
+		m.fails = 0
+	}
 }
 
 func (m *Manager) validSession(tok string) bool {
@@ -190,95 +170,16 @@ func (m *Manager) mintSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- WebAuthn helpers ------------------------------------------------------
-
-// rp returns the effective RP ID: the pinned override, or the request Host.
-func (m *Manager) rp(r *http.Request) string {
-	if m.rpOverride != "" {
-		return m.rpOverride
+func (m *Manager) clearSession(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		m.mu.Lock()
+		delete(m.sessions, c.Value)
+		m.mu.Unlock()
 	}
-	return rpID(r)
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
 }
 
-func (m *Manager) webauthnFor(r *http.Request) (*webauthn.WebAuthn, error) {
-	return webauthn.New(&webauthn.Config{
-		RPID:          m.rp(r),
-		RPDisplayName: "shellraiser",
-		RPOrigins:     []string{origin(r)},
-	})
-}
-
-// user returns the box owner scoped to the RP ID's credentials.
-func (m *Manager) user(rp string) *boxUser {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var creds []webauthn.Credential
-	for _, c := range m.data.Creds {
-		if c.RPID == rp {
-			creds = append(creds, c.Cred)
-		}
-	}
-	return &boxUser{id: m.data.UserID, creds: creds}
-}
-
-func (m *Manager) credCount(rp string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n := 0
-	for _, c := range m.data.Creds {
-		if c.RPID == rp {
-			n++
-		}
-	}
-	return n
-}
-
-// boxUser implements webauthn.User for one RP ID.
-type boxUser struct {
-	id    []byte
-	creds []webauthn.Credential
-}
-
-func (u *boxUser) WebAuthnID() []byte                         { return u.id }
-func (u *boxUser) WebAuthnName() string                       { return "shellraiser" }
-func (u *boxUser) WebAuthnDisplayName() string                { return "shellraiser owner" }
-func (u *boxUser) WebAuthnCredentials() []webauthn.Credential { return u.creds }
-
-// --- ceremony storage ------------------------------------------------------
-
-func (m *Manager) putCeremony(w http.ResponseWriter, r *http.Request, c *ceremony) {
-	id := hex.EncodeToString(randomBytes(16))
-	c.expires = time.Now().Add(ceremonyTTL)
-	m.mu.Lock()
-	m.ceremonies[id] = c
-	m.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{
-		Name: ceremonyCookie, Value: id, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, Secure: isHTTPS(r), MaxAge: int(ceremonyTTL.Seconds()),
-	})
-}
-
-func (m *Manager) takeCeremony(r *http.Request) *ceremony {
-	c, err := r.Cookie(ceremonyCookie)
-	if err != nil {
-		return nil
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cer, ok := m.ceremonies[c.Value]
-	if !ok || time.Now().After(cer.expires) {
-		delete(m.ceremonies, c.Value)
-		return nil
-	}
-	delete(m.ceremonies, c.Value)
-	return cer
-}
-
-// --- small helpers ---------------------------------------------------------
-
-func ctEq(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
+// --- helpers ---------------------------------------------------------------
 
 func randomBytes(n int) []byte {
 	b := make([]byte, n)
@@ -286,8 +187,8 @@ func randomBytes(n int) []byte {
 	return b
 }
 
-// randomCode returns a friendly bootstrap code like "K7Q2-9FXM-3PWA".
-func randomCode() string {
+// randomPassword returns a friendly one-time password like "K7Q2-9FXM-3PWA".
+func randomPassword() string {
 	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	b := randomBytes(12)
 	var sb strings.Builder
@@ -300,43 +201,6 @@ func randomCode() string {
 	return sb.String()
 }
 
-func rpID(r *http.Request) string {
-	h := r.Host
-	if i := strings.LastIndex(h, ":"); i >= 0 {
-		h = h[:i]
-	}
-	return h
-}
-
-func origin(r *http.Request) string {
-	return scheme(r) + "://" + r.Host
-}
-
-func scheme(r *http.Request) string {
-	if isHTTPS(r) {
-		return "https"
-	}
-	return "http"
-}
-
 func isHTTPS(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// descriptors lists existing credentials so registration can exclude them.
-func descriptors(creds []webauthn.Credential) []protocol.CredentialDescriptor {
-	out := make([]protocol.CredentialDescriptor, 0, len(creds))
-	for _, c := range creds {
-		out = append(out, protocol.CredentialDescriptor{
-			Type:         protocol.PublicKeyCredentialType,
-			CredentialID: c.ID,
-		})
-	}
-	return out
 }

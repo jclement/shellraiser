@@ -1,43 +1,56 @@
 package auth
 
-import (
-	"net/http/httptest"
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestRPIDStripsPort(t *testing.T) {
-	cases := map[string]string{
-		"localhost:7000":  "localhost",
-		"box.example.com": "box.example.com",
-		"1.2.3.4:443":     "1.2.3.4",
+func TestTempPasswordUntilSet(t *testing.T) {
+	m := New("", func(string) error { return nil }, false)
+	if !m.MustSetPassword() {
+		t.Fatal("should require a password initially")
 	}
-	for host, want := range cases {
-		r := httptest.NewRequest("GET", "http://"+host+"/", nil)
-		r.Host = host
-		if got := rpID(r); got != want {
-			t.Errorf("rpID(%q) = %q, want %q", host, got, want)
-		}
+	if m.TempPassword() == "" {
+		t.Fatal("a one-time password should be minted")
+	}
+	if !m.checkPassword(m.TempPassword()) {
+		t.Fatal("temp password should authenticate")
+	}
+	if m.checkPassword("wrong") {
+		t.Fatal("wrong password must not authenticate")
 	}
 }
 
-func TestBootstrapCodeFormat(t *testing.T) {
-	c := randomCode()
-	if len(c) != 14 { // 12 chars + 2 dashes
-		t.Errorf("code %q len %d, want 14", c, len(c))
+func TestSetPasswordClearsTemp(t *testing.T) {
+	var saved string
+	m := New("", func(h string) error { saved = h; return nil }, false)
+	if err := m.SetPassword("hunter2"); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Count(c, "-") != 2 {
-		t.Errorf("code %q should have 2 dashes", c)
+	if m.MustSetPassword() {
+		t.Fatal("password is set now")
+	}
+	if m.TempPassword() != "" {
+		t.Fatal("temp password should be cleared")
+	}
+	if saved == "" {
+		t.Fatal("hash should have been persisted")
+	}
+	if !m.checkPassword("hunter2") {
+		t.Fatal("new password should authenticate")
+	}
+	if m.checkPassword("hunter3") {
+		t.Fatal("wrong password must fail")
 	}
 }
 
-func TestSameOriginUserScopedByRP(t *testing.T) {
-	m := &Manager{data: store{UserID: []byte("u")}}
-	m.data.Creds = []storedCred{{RPID: "localhost"}, {RPID: "box.example.com"}, {RPID: "localhost"}}
-	if n := m.credCount("localhost"); n != 2 {
-		t.Errorf("credCount(localhost) = %d, want 2", n)
+func TestShortPasswordRejected(t *testing.T) {
+	m := New("", func(string) error { return nil }, false)
+	if err := m.SetPassword("abc"); err == nil {
+		t.Fatal("short password should be rejected")
 	}
-	if got := len(m.user("box.example.com").creds); got != 1 {
-		t.Errorf("user(box.example.com).creds = %d, want 1", got)
+}
+
+func TestNoAuthAlwaysAuthenticated(t *testing.T) {
+	m := New("", func(string) error { return nil }, true)
+	if m.Enabled() {
+		t.Fatal("auth should be disabled")
 	}
 }

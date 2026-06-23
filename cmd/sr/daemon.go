@@ -79,11 +79,17 @@ func runDaemon(dir, port string, noAuth, tailnet bool) {
 	// We own the lock for our lifetime.
 	_ = os.WriteFile(metaPath(dir), mustJSON(coordMeta{PID: os.Getpid(), Port: port, Sock: sockPath(dir)}), 0o600)
 
-	am, err := auth.New(filepath.Join(dir, "auth", "store.json"), "", "", noAuth)
+	// Global config holds the password hash + passthrough toggles.
+	hc, err := loadHostConfig(dir)
 	if err != nil {
-		fatal("auth: %v", err)
+		fatal("config: %v", err)
 	}
+	am := auth.New(hc.PasswordHash, func(hash string) error {
+		hc.PasswordHash = hash
+		return saveHostConfig(dir, hc)
+	}, noAuth)
 	am.Logf = func(format string, a ...any) { ui.Info("auth", format, a...) }
+	hostCfg = hc // expose to ensureWorker for ssh/git passthrough
 
 	// Coordinator SSH key: signs tunnels to workers; its pubkey is injected into
 	// each worker (so only we can -L through their sshd).
@@ -153,8 +159,8 @@ func spawnDaemon(dir, port string, noAuth, tailnet bool) error {
 }
 
 // registerWithDetails asks the daemon to ensure a worker for project (using a
-// pre-built image), prints the first-run bootstrap code if auth needs enrolling,
-// and returns the worker id.
+// pre-built image), prints the first-run one-time password if needed, and
+// returns the worker id.
 func registerWithDetails(m *coordMeta, project, image string) (string, error) {
 	body := mustJSON(map[string]string{"project": project, "image": image})
 	resp, err := sockClient(m.Sock).Post("http://unix/register", "application/json", bytes.NewReader(body))
@@ -167,16 +173,16 @@ func registerWithDetails(m *coordMeta, project, image string) (string, error) {
 		return "", fmt.Errorf("register failed: %s", b)
 	}
 	var out struct {
-		ID          string `json:"id"`
-		AuthEnabled bool   `json:"authEnabled"`
-		Registered  bool   `json:"registered"`
-		Bootstrap   string `json:"bootstrap"`
+		ID           string `json:"id"`
+		AuthEnabled  bool   `json:"authEnabled"`
+		HasPassword  bool   `json:"hasPassword"`
+		TempPassword string `json:"tempPassword"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return "", err
 	}
-	if out.AuthEnabled && !out.Registered && out.Bootstrap != "" {
-		ui.Info("auth", "first run — register a passkey with bootstrap code: %s", out.Bootstrap)
+	if out.AuthEnabled && !out.HasPassword && out.TempPassword != "" {
+		ui.Info("auth", "first run — sign in with one-time password: %s", out.TempPassword)
 	}
 	return out.ID, nil
 }

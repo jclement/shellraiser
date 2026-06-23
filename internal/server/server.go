@@ -73,18 +73,18 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 	for _, c := range cfg.Commands {
 		commands[c.Name] = c
 	}
-	// Auth store lives in the persistent home mount.
+	// In v2 the worker is a backend behind the coordinator (which owns auth); it
+	// runs with auth disabled and is fenced by the per-worker token instead. The
+	// manager is kept (it serves /api/auth/status) but is always in no-auth mode.
+	am := auth.New("", nil, true)
+	am.Logf = func(format string, a ...any) { ui.Info("auth", format, a...) }
+	// Worktree colors/names persist in the home mount.
 	home := os.Getenv("HOME")
 	if home == "" {
 		home = repoDir
 	}
-	authDir := filepath.Join(home, ".local", "share", "shellraiser")
-	_ = os.MkdirAll(authDir, 0o700)
-	am, err := auth.New(filepath.Join(authDir, "auth.json"), cfg.Token, cfg.RPID, cfg.NoAuth)
-	if err != nil {
-		return nil, fmt.Errorf("auth: %w", err)
-	}
-	am.Logf = func(format string, a ...any) { ui.Info("auth", format, a...) }
+	stateDir := filepath.Join(home, ".local", "share", "shellraiser")
+	_ = os.MkdirAll(stateDir, 0o700)
 	// Repo display name: config override → git remote → mount-path basename.
 	repoName := cfg.Name
 	if repoName == "" {
@@ -99,7 +99,7 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 		worktreesDir: worktreesDir,
 		cfg:          cfg,
 		auth:         am,
-		meta:         newMetaStore(filepath.Join(authDir, "worktree-meta.json")),
+		meta:         newMetaStore(filepath.Join(stateDir, "worktree-meta.json")),
 		repoName:     repoName,
 		commands:     commands,
 		mgr: session.NewManager(session.Commands{
@@ -237,16 +237,7 @@ func (s *Server) printAccess() {
 		host = "localhost" + host
 	}
 	url := fmt.Sprintf("http://%s/", host)
-	if !s.auth.Enabled() {
-		ui.Warn("auth", "DISABLED — open %s", url)
-		return
-	}
 	ui.Ready(url)
-	if s.auth.HasCredentials() {
-		ui.Info("auth", "passkey sign-in (registered) — add a passkey from the UI when signed in")
-	} else {
-		ui.Info("auth", "register your first passkey with bootstrap code: %s", s.auth.BootstrapCode())
-	}
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

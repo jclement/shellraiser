@@ -110,6 +110,7 @@ function modal({ title, bodyHTML, fields, actions }) {
       }
       body.appendChild(el('label', 'mb-1 mt-3 block text-[11px] text-muted', f.label));
       const inp = el('input', 'input w-full px-2.5 py-2 text-sm text-app' + (f.mono ? ' tracking-wider' : ''));
+      if (f.type === 'password') inp.type = 'password';
       inp.placeholder = f.placeholder || ''; inp.value = f.value || '';
       if (f.datalist && f.datalist.length) {
         const dl = el('datalist'); dl.id = 'dl-' + f.name;
@@ -855,63 +856,78 @@ function wire() {
   window.addEventListener('focus', () => { loadWorktrees().catch(() => {}); loadSessions().catch(() => {}); loadPorts().catch(() => {}); });
 }
 
-// ---- passkey auth ---------------------------------------------------------
+// ---- password auth --------------------------------------------------------
 
-const SWA = window.SimpleWebAuthnBrowser;
-
-async function passkeyRegister(code, label) {
-  const opts = await capi('POST', '/api/auth/register/begin', { code, label });
-  const att = await SWA.startRegistration({ optionsJSON: opts.publicKey });
-  await capi('POST', '/api/auth/register/finish', att);
-}
-
-async function passkeyLogin() {
-  const opts = await capi('POST', '/api/auth/login/begin', {});
-  const asr = await SWA.startAuthentication({ optionsJSON: opts.publicKey });
-  await capi('POST', '/api/auth/login/finish', asr);
-}
-
-function loginErr(e) {
+function loginErr(msg) {
   const box = $('#login-err');
-  box.textContent = e.message || String(e);
+  box.textContent = msg;
   box.classList.remove('hidden');
 }
 
-function showLogin(status) {
+function showLoginOverlay() {
   $('#app').style.display = 'none';
-  const overlay = $('#login');
-  overlay.classList.remove('hidden');
-  overlay.classList.add('flex');
-  $('#login-rp').textContent = status.rpId || '';
-  if (status.registered) {
-    // A passkey already exists for this host — just offer sign-in. The
-    // bootstrap/register box is only for the first passkey on a new host.
-    $('#login-signin').classList.remove('hidden');
-    $('#login-register').classList.add('hidden');
-    $('#passkey-login').onclick = async () => { try { await passkeyLogin(); location.reload(); } catch (e) { loginErr(e); } };
-  } else {
-    $('#login-signin').classList.add('hidden');
-    $('#login-register').classList.remove('hidden');
-    $('#passkey-register').onclick = async () => {
-      try { await passkeyRegister($('#reg-code').value.trim(), $('#reg-label').value.trim() || 'passkey'); location.reload(); }
-      catch (e) { loginErr(e); }
-    };
-  }
+  const o = $('#login');
+  o.classList.remove('hidden'); o.classList.add('flex');
 }
 
-// Add an additional passkey while already signed in (no bootstrap code needed).
-async function addPasskey() {
-  const label = await promptModal('Add a passkey', { name: 'label', label: 'Label', placeholder: 'phone' }, 'Add');
-  if (label === null) return;
-  try { await passkeyRegister('', label || 'passkey'); toast('Passkey added', 'ok'); }
+function showSignin() {
+  $('#login-signin').classList.remove('hidden');
+  $('#login-setpw').classList.add('hidden');
+  const pw = $('#login-pw');
+  setTimeout(() => pw.focus(), 0);
+  const submit = async () => {
+    $('#login-err').classList.add('hidden');
+    try {
+      const r = await capi('POST', '/api/auth/login', { password: pw.value });
+      if (r.mustSetPassword) { showSetPassword('Pick a password to replace the one-time code.'); return; }
+      location.reload();
+    } catch (e) { loginErr(e.message || 'sign in failed'); }
+  };
+  $('#login-btn').onclick = submit;
+  pw.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+}
+
+function showSetPassword(hint) {
+  $('#login-signin').classList.add('hidden');
+  $('#login-setpw').classList.remove('hidden');
+  $('#setpw-hint').textContent = hint || '';
+  const a = $('#setpw-1'), b = $('#setpw-2');
+  a.value = ''; b.value = '';
+  setTimeout(() => a.focus(), 0);
+  const submit = async () => {
+    $('#login-err').classList.add('hidden');
+    if (a.value.length < 6) { loginErr('Password must be at least 6 characters.'); return; }
+    if (a.value !== b.value) { loginErr('Passwords do not match.'); return; }
+    try { await capi('POST', '/api/auth/password', { password: a.value }); location.reload(); }
+    catch (e) { loginErr(e.message || 'could not set password'); }
+  };
+  $('#setpw-btn').onclick = submit;
+  b.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+}
+
+// Settings modal (signed in): change password.
+async function openSettings() {
+  const v = await modal({
+    title: 'Settings',
+    bodyHTML: '<div class="text-muted">Change the coordinator password (used on localhost and the tailnet).</div>',
+    fields: [
+      { name: 'p1', label: 'New password (min 6)', type: 'password' },
+      { name: 'p2', label: 'Confirm', type: 'password' },
+    ],
+    actions: [{ label: 'Cancel', value: null }, { label: 'Change password', primary: true }],
+  });
+  if (!v) return;
+  if (!v.p1 || v.p1.length < 6) { toast('Password must be at least 6 characters'); return; }
+  if (v.p1 !== v.p2) { toast('Passwords do not match'); return; }
+  try { await capi('POST', '/api/auth/password', { password: v.p1 }); toast('Password changed', 'ok'); }
   catch (e) { toast(e.message); }
 }
 
 async function initApp(authEnabled) {
   wire();
   if (authEnabled) {
-    $('#add-passkey').classList.remove('hidden');
-    $('#add-passkey').onclick = addPasskey;
+    $('#settings-btn').classList.remove('hidden');
+    $('#settings-btn').onclick = openSettings;
     $('#logout').classList.remove('hidden');
     $('#logout').onclick = async () => { await capi('POST', '/api/auth/logout', {}); location.reload(); };
   }
@@ -943,10 +959,16 @@ async function initApp(authEnabled) {
 async function main() {
   fillIcons();
   applyTheme(currentTheme());
-  let status = { enabled: false, authenticated: true };
+  let status = { enabled: false, authenticated: true, mustSetPassword: false };
   try { status = await capi('GET', '/api/auth/status'); } catch (_) {}
   if (status.enabled && !status.authenticated) {
-    showLogin(status);
+    showLoginOverlay();
+    showSignin();
+    return;
+  }
+  if (status.enabled && status.authenticated && status.mustSetPassword) {
+    showLoginOverlay();
+    showSetPassword('Set a password to finish securing this coordinator.');
     return;
   }
   await initApp(status.enabled);

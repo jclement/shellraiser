@@ -138,10 +138,10 @@ func (c *Coordinator) controlMux() *http.ServeMux {
 		resp := map[string]any{
 			"id": id, "port": c.port,
 			"authEnabled": c.auth.Enabled(),
-			"registered":  c.auth.HasCredentials(),
+			"hasPassword": c.auth.HasPassword(),
 		}
-		if c.auth.Enabled() && !c.auth.HasCredentials() {
-			resp["bootstrap"] = c.auth.BootstrapCode()
+		if pw := c.auth.TempPassword(); pw != "" {
+			resp["tempPassword"] = pw
 		}
 		writeJSON(w, resp)
 	})
@@ -316,10 +316,10 @@ func (c *Coordinator) Run(sockPath string) error {
 	addr := "127.0.0.1:" + c.port
 	if !c.auth.Enabled() {
 		ui.Warn("auth", "DISABLED — anyone who can reach %s controls every project", addr)
-	} else if c.auth.HasCredentials() {
-		ui.Info("auth", "passkey sign-in required (registered)")
+	} else if c.auth.HasPassword() {
+		ui.Info("auth", "password sign-in required")
 	} else {
-		ui.Info("auth", "register your first passkey with bootstrap code: %s", c.auth.BootstrapCode())
+		ui.Info("auth", "first run — sign in with one-time password: %s", c.auth.TempPassword())
 	}
 	ui.Ready("http://" + addr + "/")
 	return http.ListenAndServe(addr, handler)

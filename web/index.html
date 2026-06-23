@@ -17,7 +17,6 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
-  <script src="https://unpkg.com/@simplewebauthn/browser@13/dist/bundle/index.umd.min.js"></script>
   <script>
     tailwind.config = { darkMode: 'class', theme: { extend: { fontFamily: { mono: ['ui-monospace', 'SFMono-Regular', 'JetBrains Mono', 'Menlo', 'monospace'] } } } };
   </script>
@@ -90,20 +89,24 @@
       <div class="flex items-center gap-2 border-b border-app px-4 py-3">
         <span class="text-accent" data-icon="box"></span>
         <span class="font-semibold tracking-tight text-app">shellraiser</span>
-        <span id="login-rp" class="ml-auto text-[11px] text-faint"></span>
       </div>
-      <div id="login-signin" class="hidden border-b border-app px-4 py-4">
-        <button id="passkey-login" class="btn btn-primary w-full justify-center px-3 py-2 text-sm font-medium"><span data-icon="key" class="icon-sm"></span><span>Sign in with passkey</span></button>
+      <!-- Sign in -->
+      <div id="login-signin" class="hidden px-4 py-4">
+        <label class="block text-[11px] text-muted">Password</label>
+        <input id="login-pw" type="password" autocomplete="current-password" class="input mt-1 w-full px-2.5 py-2 text-sm" />
+        <button id="login-btn" class="btn btn-primary mt-4 w-full justify-center px-3 py-2 text-sm font-medium"><span data-icon="key" class="icon-sm"></span><span>Sign in</span></button>
       </div>
-      <div id="login-register" class="px-4 py-4">
-        <div class="mb-3 text-[11px] font-semibold uppercase tracking-wider text-faint">Register a passkey</div>
-        <label class="block text-[11px] text-muted">Bootstrap code <span class="text-faint">(from the server logs)</span></label>
-        <input id="reg-code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" class="input mt-1 w-full px-2.5 py-2 text-sm tracking-wider" />
-        <label class="mt-3 block text-[11px] text-muted">Label</label>
-        <input id="reg-label" placeholder="my laptop" autocomplete="off" class="input mt-1 w-full px-2.5 py-2 text-sm" />
-        <button id="passkey-register" class="btn mt-4 w-full justify-center px-3 py-2 text-sm">Create passkey</button>
-        <div id="login-err" class="mt-3 hidden border-l-2 px-2.5 py-1.5 text-xs" style="border-color:var(--red);color:var(--red);background:color-mix(in srgb,var(--red) 10%,transparent)"></div>
+      <!-- Set / choose a password (first run or change) -->
+      <div id="login-setpw" class="hidden px-4 py-4">
+        <div class="mb-3 text-[11px] font-semibold uppercase tracking-wider text-faint">Choose a password</div>
+        <div id="setpw-hint" class="mb-2 text-xs text-muted"></div>
+        <label class="block text-[11px] text-muted">New password <span class="text-faint">(min 6 chars)</span></label>
+        <input id="setpw-1" type="password" autocomplete="new-password" class="input mt-1 w-full px-2.5 py-2 text-sm" />
+        <label class="mt-3 block text-[11px] text-muted">Confirm</label>
+        <input id="setpw-2" type="password" autocomplete="new-password" class="input mt-1 w-full px-2.5 py-2 text-sm" />
+        <button id="setpw-btn" class="btn btn-primary mt-4 w-full justify-center px-3 py-2 text-sm">Set password</button>
       </div>
+      <div id="login-err" class="mx-4 mb-4 hidden border-l-2 px-2.5 py-1.5 text-xs" style="border-color:var(--red);color:var(--red);background:color-mix(in srgb,var(--red) 10%,transparent)"></div>
     </div>
   </div>
 
@@ -148,7 +151,7 @@
         <button class="seg" data-theme="dark" title="Dark theme"><span data-icon="moon" class="icon-sm"></span></button>
         <div class="ml-auto flex items-center gap-1">
           <button id="db-btn" class="iconbtn hidden p-1" title="Database (pgweb)"><span data-icon="database" class="icon-sm"></span></button>
-          <button id="add-passkey" class="iconbtn hidden p-1" title="Add a passkey"><span data-icon="key" class="icon-sm"></span></button>
+          <button id="settings-btn" class="iconbtn hidden p-1" title="Settings"><span data-icon="key" class="icon-sm"></span></button>
           <button id="logout" class="iconbtn hidden p-1" title="Sign out"><span data-icon="logout" class="icon-sm"></span></button>
         </div>
       </div>
