@@ -22,18 +22,28 @@ var reservedPorts = map[int]bool{5432: true, 8081: true, 8082: true, 7000: true,
 // reaches arbitrary container TCP identically on macOS, Linux, and WSL2.
 type PortMapper struct {
 	signer  ssh.Signer
+	ts      tailnetListener // non-nil when --tailnet is on; also binds the tailnet IP
 	mu      sync.Mutex
 	clients map[string]*ssh.Client      // workerID → ssh client
 	fwds    map[string]map[int]*forward // workerID → containerPort → forward
 }
 
+// tailnetListener is the slice of tsnet.Server we use: Listen on the tailnet IP.
+type tailnetListener interface {
+	Listen(network, addr string) (net.Listener, error)
+}
+
 type forward struct {
-	ln       net.Listener
+	lns      []net.Listener // loopback (+ tailnet, when enabled)
 	hostPort int
 }
 
-func newPortMapper(signer ssh.Signer) *PortMapper {
-	return &PortMapper{signer: signer, clients: map[string]*ssh.Client{}, fwds: map[string]map[int]*forward{}}
+func newPortMapper(signer ssh.Signer, ts tailnetListener) *PortMapper {
+	pm := &PortMapper{signer: signer, clients: map[string]*ssh.Client{}, fwds: map[string]map[int]*forward{}}
+	if ts != nil {
+		pm.ts = ts
+	}
+	return pm
 }
 
 func (m *PortMapper) client(w *Worker) (*ssh.Client, error) {
@@ -90,17 +100,45 @@ func (m *PortMapper) Map(w *Worker, containerPort int) (int, error) {
 		}
 	}
 	hostPort := ln.Addr().(*net.TCPAddr).Port
+	go m.serve(ln, cl, containerPort)
 
 	m.mu.Lock()
 	if m.fwds[w.ID] == nil {
 		m.fwds[w.ID] = map[int]*forward{}
 	}
-	m.fwds[w.ID][containerPort] = &forward{ln: ln, hostPort: hostPort}
+	m.fwds[w.ID][containerPort] = &forward{lns: []net.Listener{ln}, hostPort: hostPort}
 	m.mu.Unlock()
-
-	go m.serve(ln, cl, containerPort)
 	ui.Info("ports", "mapped %s :%d → 127.0.0.1:%d", w.ID, containerPort, hostPort)
+
+	// Also expose on the tailnet IP (same port number) when --tailnet is on.
+	// tsnet.Listen blocks until the node is authenticated, so do it async — the
+	// loopback mapping is already live and never waits on the tailnet.
+	if m.ts != nil {
+		go m.bindTailnet(w.ID, cl, containerPort)
+	}
 	return hostPort, nil
+}
+
+// bindTailnet attaches a tailnet listener for an already-mapped port once the
+// tsnet node is up. If the mapping was removed meanwhile, the late listener is
+// closed.
+func (m *PortMapper) bindTailnet(workerID string, cl *ssh.Client, containerPort int) {
+	tln, err := m.ts.Listen("tcp", ":"+strconv.Itoa(containerPort))
+	if err != nil {
+		ui.Warn("ports", "tailnet bind :%d failed: %v", containerPort, err)
+		return
+	}
+	m.mu.Lock()
+	f, ok := m.fwds[workerID][containerPort]
+	if !ok {
+		m.mu.Unlock()
+		_ = tln.Close()
+		return
+	}
+	f.lns = append(f.lns, tln)
+	m.mu.Unlock()
+	ui.Info("ports", "mapped %s :%d on the tailnet too", workerID, containerPort)
+	m.serve(tln, cl, containerPort)
 }
 
 func (m *PortMapper) serve(ln net.Listener, cl *ssh.Client, containerPort int) {
@@ -129,7 +167,9 @@ func (m *PortMapper) Unmap(workerID string, containerPort int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if f, ok := m.fwds[workerID][containerPort]; ok {
-		_ = f.ln.Close()
+		for _, ln := range f.lns {
+			_ = ln.Close()
+		}
 		delete(m.fwds[workerID], containerPort)
 	}
 }
@@ -140,7 +180,9 @@ func (m *PortMapper) CloseWorker(workerID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, f := range m.fwds[workerID] {
-		_ = f.ln.Close()
+		for _, ln := range f.lns {
+			_ = ln.Close()
+		}
 	}
 	delete(m.fwds, workerID)
 	if c, ok := m.clients[workerID]; ok {

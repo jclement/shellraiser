@@ -16,6 +16,7 @@ import (
 
 	"github.com/jclement/shellraiser/internal/auth"
 	"github.com/jclement/shellraiser/internal/ui"
+	"tailscale.com/tsnet"
 )
 
 // version is the sr release version, overridden at build time via
@@ -99,11 +100,23 @@ func runDaemon(dir, port string, noAuth, tailnet bool) {
 	}
 	coordAuthKey = authKey
 
-	co := newCoordinator(port, am)
-	co.pm = newPortMapper(signer)
-	co.reg.reconcile() // re-adopt any workers from a previous run
+	// One tsnet node, shared by the UI listener and the port-mapper (so mapped
+	// ports can also bind the tailnet IP).
+	var ts *tsnet.Server
 	if tailnet {
-		go serveTailnet(co, dir)
+		ts = newTailnetServer(dir)
+		defer ts.Close()
+	}
+
+	var tl tailnetListener // true-nil interface when tailnet is off
+	if ts != nil {
+		tl = ts
+	}
+	co := newCoordinator(port, am)
+	co.pm = newPortMapper(signer, tl)
+	co.reg.reconcile() // re-adopt any workers from a previous run
+	if ts != nil {
+		go serveTailnetUI(co, ts)
 	}
 	if err := co.Run(sockPath(dir)); err != nil {
 		fatal("%v", err)
