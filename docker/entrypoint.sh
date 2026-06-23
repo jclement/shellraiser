@@ -151,6 +151,47 @@ if [ -S /var/run/docker.sock ]; then
   usermod -aG "$sock_gid" "$USERNAME" || true
 fi
 
+# 3b. Optional SSH server (key-only) with TCP forwarding — gives a real terminal
+#     from any SSH client AND port-forwarding to internal ports (ssh -L ...).
+#     Enabled when SLOPBOX_SSH=1 or a public key is provided.
+start_sshd() {
+  local SSHDIR="$HOME_DIR/.ssh" KEYS HK PORT_SSH
+  SSHDIR="$HOME_DIR/.ssh"; KEYS="$SSHDIR/authorized_keys"; HK="$SSHDIR/host_keys"
+  mkdir -p "$HK"
+  if [ -n "${SLOPBOX_SSH_PUBKEY:-}" ] && ! grep -qxF "$SLOPBOX_SSH_PUBKEY" "$KEYS" 2>/dev/null; then
+    echo "$SLOPBOX_SSH_PUBKEY" >> "$KEYS"
+  fi
+  if [ ! -s "$KEYS" ]; then
+    echo "slopbox: ⚠ SSH enabled but no authorized key — set SLOPBOX_SSH_PUBKEY. sshd not started."
+    return
+  fi
+  chown "$USERNAME:$USERNAME" "$SSHDIR" "$KEYS"; chmod 700 "$SSHDIR"; chmod 600 "$KEYS"
+  [ -f "$HK/ssh_host_ed25519_key" ] || ssh-keygen -q -t ed25519 -f "$HK/ssh_host_ed25519_key" -N ""
+  chmod 600 "$HK"/* 2>/dev/null || true
+  PORT_SSH="${SLOPBOX_SSH_PORT:-22}"
+  mkdir -p /run/sshd
+  cat > /etc/ssh/sshd_config.d/slopbox.conf <<CONF
+Port $PORT_SSH
+AllowUsers $USERNAME
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowTcpForwarding yes
+AllowAgentForwarding yes
+GatewayPorts clientspecified
+X11Forwarding no
+HostKey $HK/ssh_host_ed25519_key
+AuthorizedKeysFile $KEYS
+PidFile /run/sshd/sshd.pid
+CONF
+  echo "slopbox: sshd on :$PORT_SSH (key auth, TCP forwarding) — ssh $USERNAME@<host> -p <published>"
+  /usr/sbin/sshd -E "$HOME_DIR/.local/share/slopbox/sshd.log" || echo "slopbox: ⚠ sshd failed to start"
+}
+if [ "${SLOPBOX_SSH:-0}" = "1" ] || [ -n "${SLOPBOX_SSH_PUBKEY:-}" ]; then
+  start_sshd
+fi
+
 # 4. Optional external access, selected by which env vars are present. The
 #    tunnel binary is downloaded into the home volume on first use.
 if [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ] && ensure_cloudflared; then

@@ -141,6 +141,25 @@ entirely (this is what the Playwright suite uses).
 
 ## Remote access
 
+### SSH (terminal + port forwarding)
+
+Run a key-only SSH server on a second port — a real terminal from any SSH client
+(iPad/Termius/Blink) **and** port forwarding to reach internal dev-server ports
+without publishing them:
+
+```bash
+./slopbox.sh start --ssh                 # publishes host :2222 → container :22
+./slopbox.sh start --ssh --ssh-port 2200 --ssh-key ~/.ssh/id_ed25519.pub
+ssh ubuntu@localhost -p 2222                         # terminal
+ssh ubuntu@localhost -p 2222 -L 3000:localhost:3000  # reach an internal :3000
+ssh ubuntu@localhost -p 2222 -D 1080                 # SOCKS to ANY internal port
+```
+
+Key-only auth (no passwords), host keys persist in the home volume, TCP
+forwarding enabled. Enable manually with `-e SLOPBOX_SSH=1 -e SLOPBOX_SSH_PUBKEY="$(cat key.pub)" -p 2222:22`.
+
+### Tunnels
+
 To expose the box beyond localhost, set env vars and a tunnel comes up automatically:
 
 | Method | Env vars |

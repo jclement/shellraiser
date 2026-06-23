@@ -25,7 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Root-level system packages (incl. postgres server + client).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl wget gnupg git tmux zsh gosu \
+        ca-certificates curl wget gnupg git tmux zsh gosu openssh-server \
         build-essential procps iproute2 file locales sudo unzip xz-utils \
         vim nodejs npm software-properties-common \
         postgresql postgresql-contrib \

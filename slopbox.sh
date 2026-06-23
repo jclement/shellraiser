@@ -9,7 +9,8 @@
 #   slopbox.sh logs  [name]     follow a box's logs
 #   slopbox.sh nuke  [name]     remove a box AND its persistent state
 #
-# start flags:  --rebuild  --fg  --port N  --docker  --pull  --image REF  --publish P
+# start flags:  --rebuild  --fg  --port N  --docker  --pull  --publish P
+#               --ssh [--ssh-port N] [--ssh-key PATH]   (key-only ssh + port fwd)
 # nuke flags:   --image    (also remove the local slopbox image)
 #
 # When a box isn't named, the current dir's box is used, else fzf lets you pick.
@@ -116,7 +117,7 @@ cmd_preview() { # internal: fzf preview pane
 
 cmd_start() {
   need_docker
-  local image="$IMAGE_DEFAULT" port="7700" rebuild=0 docksock=0 pull=0 fg=0 project=""
+  local image="$IMAGE_DEFAULT" port="7700" rebuild=0 docksock=0 pull=0 fg=0 ssh=0 sshport="2222" sshkey="" project=""
   local -a extra=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -125,6 +126,9 @@ cmd_start() {
       --docker) docksock=1; shift ;;
       --pull) pull=1; shift ;;
       --fg|--foreground) fg=1; shift ;;
+      --ssh) ssh=1; shift ;;
+      --ssh-port) ssh=1; sshport="${2#:}"; shift 2 ;;
+      --ssh-key) ssh=1; sshkey="$2"; shift 2 ;;
       --image) image="$2"; shift 2 ;;
       --publish) extra+=("$2"); shift 2 ;;
       -*) die "unknown start flag: $1" ;;
@@ -154,6 +158,15 @@ cmd_start() {
   [ "$docksock" -eq 1 ] && mounts+=(-v /var/run/docker.sock:/var/run/docker.sock)
   for p in ${extra[@]+"${extra[@]}"}; do mounts+=(-p "$p:$p"); done
 
+  # SSH (key-only) with port forwarding: publish host $sshport → container :22.
+  if [ "$ssh" -eq 1 ]; then
+    local key="$sshkey"
+    [ -z "$key" ] && for k in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub"; do [ -f "$k" ] && key="$k" && break; done
+    [ -n "$key" ] && [ -f "$key" ] || die "ssh: no public key (use --ssh-key PATH or create ~/.ssh/id_ed25519.pub)"
+    mounts+=(-p "$sshport:22" -e SLOPBOX_SSH=1 -e "SLOPBOX_SSH_PUBKEY=$(cat "$key")")
+    echo "${C_DIM}» ssh enabled on host port $sshport (key: $key)${C_RST}"
+  fi
+
   # Foreground + ephemeral (mise run dev): stream logs live, ctrl-C stops &
   # removes the container. The state volume/mount persists either way.
   if [ "$fg" -eq 1 ]; then
@@ -173,6 +186,9 @@ cmd_start() {
   echo "${C_PUR}»${C_RST} starting $name ${C_DIM}($project)${C_RST}"
   docker run -d "${mounts[@]}" "$image" >/dev/null
   sleep 2; print_access "$name" "$port"
+  if [ "$ssh" -eq 1 ]; then
+    echo "  ${C_DIM}ssh:${C_RST}  ssh ubuntu@localhost -p $sshport    ${C_DIM}(forward a port: -L 3000:localhost:3000)${C_RST}"
+  fi
 }
 
 print_access() {
