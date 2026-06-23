@@ -36,6 +36,7 @@ type Server struct {
 	meta         *metaStore
 	repoName     string
 	commands     map[string]config.Command
+	bridge       *bridgeHub
 }
 
 var upgrader = websocket.Upgrader{
@@ -103,6 +104,7 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 		meta:         newMetaStore(filepath.Join(stateDir, "worktree-meta.json")),
 		repoName:     repoName,
 		commands:     commands,
+		bridge:       newBridgeHub(),
 		mgr: session.NewManager(session.Commands{
 			Shell: cfg.Shell, Editor: cfg.Editor, Claude: cfg.Claude, Codex: cfg.Codex, Run: cfg.Run,
 		}),
@@ -136,6 +138,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
 	mux.HandleFunc("GET /api/ports", s.handlePorts)
 	mux.HandleFunc("POST /api/ssh/command", s.handleSSHCommand)
+	mux.HandleFunc("POST /api/bridge", s.handleBridge)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /ws/term/{id}", s.handleTermWS)
 
@@ -527,6 +530,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	ch, cancel := s.mgr.Events()
 	defer cancel()
+	bch, bcancel := s.bridge.sub()
+	defer bcancel()
 
 	// Flush headers immediately so the client knows the stream is open.
 	fmt.Fprint(w, ": connected\n\n")
@@ -541,6 +546,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		case ev := <-ch:
 			b, _ := json.Marshal(ev)
 			fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
+		case bmsg := <-bch:
+			fmt.Fprintf(w, "data: %s\n\n", bmsg)
 			flusher.Flush()
 		case <-ping.C:
 			fmt.Fprint(w, ": ping\n\n")

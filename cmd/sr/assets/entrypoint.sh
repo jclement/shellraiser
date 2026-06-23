@@ -278,6 +278,30 @@ seed_ssh() {
 }
 seed_ssh
 
+# 4d. In-container bridge helpers: `open <url>` and `sr-copy` ask the web UI to
+#     open a URL / copy text on YOUR machine — so it works over the tailnet too
+#     (the browser does the work, not the container). They post to the worker API
+#     with the injected worker token.
+cat > /usr/local/bin/sr-open <<'SCRIPT'
+#!/bin/sh
+[ -z "$1" ] && { echo "usage: open <url|path>"; exit 1; }
+curl -fsS -X POST -H "X-Shellraiser-Worker: ${SHELLRAISER_WORKER_TOKEN}" -H 'content-type: application/json' \
+  --data "$(python3 -c 'import json,sys; print(json.dumps({"action":"open","url":sys.argv[1]}))' "$1")" \
+  http://127.0.0.1:7000/api/bridge >/dev/null 2>&1 \
+  && echo "→ opening in your browser: $1" || { echo "open: not connected to shellraiser"; exit 1; }
+SCRIPT
+cat > /usr/local/bin/sr-copy <<'SCRIPT'
+#!/bin/sh
+if [ "$#" -gt 0 ]; then data="$*"; else data="$(cat)"; fi
+printf '%s' "$data" | python3 -c 'import json,sys; print(json.dumps({"action":"copy","text":sys.stdin.read()}))' \
+  | curl -fsS -X POST -H "X-Shellraiser-Worker: ${SHELLRAISER_WORKER_TOKEN}" -H 'content-type: application/json' --data @- \
+    http://127.0.0.1:7000/api/bridge >/dev/null 2>&1 \
+  && echo "→ copied to your clipboard" || { echo "sr-copy: not connected"; exit 1; }
+SCRIPT
+chmod +x /usr/local/bin/sr-open /usr/local/bin/sr-copy
+ln -sf /usr/local/bin/sr-open /usr/local/bin/open
+ln -sf /usr/local/bin/sr-open /usr/local/bin/xdg-open
+
 # 5. Run the app as the unprivileged user, with HOME + tool paths integrated so
 #    directly-launched agents/editors see mise- and brew-installed tools.
 export HOME="$HOME_DIR"

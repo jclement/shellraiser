@@ -809,6 +809,7 @@ function connectEvents() {
   const es = new EventSource(BASE + '/api/events');
   es.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
+    if (m.type === 'bridge') { handleBridge(m); return; }
     const s = state.sessions.find((x) => x.id === m.id);
     if (s) { s.state = m.state; if (m.state === 'exited') s.exitCode = m.exitCode; }
     // A worktree you're not currently looking at that just finished gets the
@@ -828,6 +829,38 @@ function connectEvents() {
     if (m.ding) { ding(); flashTitle(`✅ ${m.title} done`); }
   };
   es.onerror = () => { /* EventSource auto-reconnects */ };
+}
+
+// handleBridge acts on an open/copy request from inside the container. The
+// browser does the work, so it works on localhost AND over the tailnet.
+async function handleBridge(m) {
+  if (m.action === 'copy') {
+    try { await navigator.clipboard.writeText(m.text || ''); toast('Copied to clipboard', 'ok'); }
+    catch (_) { toast('Clipboard blocked by the browser'); }
+    return;
+  }
+  if (m.action === 'open') openBridgeURL(m.url || '');
+}
+
+async function openBridgeURL(url) {
+  let u;
+  try { u = new URL(url); } catch (_) { window.open(url, '_blank'); return; }
+  const isLocal = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '0.0.0.0';
+  if (!isLocal) { window.open(url, '_blank'); return; } // external URL → just open
+  const port = parseInt(u.port || (u.protocol === 'https:' ? '443' : '80'), 10);
+  const tail = u.pathname + u.search + u.hash;
+  const host = state.portMaps[port];
+  if (host) { window.open(`http://127.0.0.1:${host}${tail}`, '_blank'); return; } // already mapped
+  // not mapped yet → offer to map it to your machine, then open
+  const yes = await confirmModal('Open ' + esc(url),
+    `Port <b class="text-app">${port}</b> isn't mapped to your machine yet. Map it and open?`,
+    { confirmLabel: 'Map & open' });
+  if (!yes) { window.open(`${BASE}/p/${port}/`, '_blank'); return; } // fall back to the HTTP proxy
+  try {
+    const r = await capi('POST', `/api/workers/${state.projectId}/ports/${port}/map`, { local: port });
+    state.portMaps[port] = r.host; renderPorts();
+    window.open(`http://127.0.0.1:${r.host}${tail}`, '_blank');
+  } catch (e) { toast(e.message); window.open(`${BASE}/p/${port}/`, '_blank'); }
 }
 
 function ding() {
