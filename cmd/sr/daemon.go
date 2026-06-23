@@ -144,10 +144,21 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 		ui.Info("sr", "project %q ready (%s)", id, workerKind(w))
 		openBrowser(url)
 		go func() {
-			sig := make(chan os.Signal, 1)
+			sig := make(chan os.Signal, 2)
 			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 			<-sig
-			ui.Info("sr", "stopping %s…", id)
+			ui.Info("sr", "stopping %s… (Ctrl-C again to force-quit)", id)
+			// Watchdog: don't let a hung teardown/docker-stop trap the process.
+			// A second signal, or a 15s deadline, forces an immediate exit.
+			go func() {
+				select {
+				case <-sig:
+					ui.Warn("sr", "forced shutdown")
+				case <-time.After(15 * time.Second):
+					ui.Warn("sr", "shutdown timed out — exiting (worker may still be stopping)")
+				}
+				os.Exit(1)
+			}()
 			runTeardown(w)
 			if w.BareMetal {
 				if w.srv != nil {

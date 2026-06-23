@@ -88,9 +88,15 @@ func cmdUp(args []string) {
 				port = args[i]
 			}
 		default:
-			if !isFlag(args[i]) && project == "" {
-				project = args[i]
+			// Reject unknown flags (e.g. `sr --version`) and stray positionals
+			// instead of silently ignoring them and starting a coordinator.
+			if isFlag(args[i]) {
+				fatal("unknown flag %q (try `sr help`)", args[i])
 			}
+			if project != "" {
+				fatal("unexpected argument %q (only one project directory may be given)", args[i])
+			}
+			project = args[i]
 		}
 	}
 	if tailnet && noAuth {
