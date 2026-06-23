@@ -237,6 +237,28 @@ seed_agents() {
 }
 seed_agents
 
+# 4c. SSH/git passthrough. The coordinator binds the host ~/.ssh read-only at
+#     /ssh-host and forwards the host SSH agent at /ssh-agent (SSH_AUTH_SOCK).
+#     Copy config + known_hosts into the user's ~/.ssh (never authorized_keys,
+#     which sshd owns) and make the forwarded agent socket usable by uid 1000.
+seed_ssh() {
+  if [ -d /ssh-host ]; then
+    SSHDIR="$HOME_DIR/.ssh"
+    mkdir -p "$SSHDIR"
+    for f in config known_hosts; do
+      [ -f "/ssh-host/$f" ] && cp "/ssh-host/$f" "$SSHDIR/$f" 2>/dev/null || true
+    done
+    chown -R "$USERNAME:$USERNAME" "$SSHDIR" 2>/dev/null || true
+    chmod 700 "$SSHDIR" 2>/dev/null || true
+    echo "shellraiser: bound host ~/.ssh (config + known_hosts)"
+  fi
+  if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "${SSH_AUTH_SOCK}" ]; then
+    chmod 666 "$SSH_AUTH_SOCK" 2>/dev/null || true
+    echo "shellraiser: SSH agent forwarded ($SSH_AUTH_SOCK)"
+  fi
+}
+seed_ssh
+
 # 5. Run the app as the unprivileged user, with HOME + tool paths integrated so
 #    directly-launched agents/editors see mise- and brew-installed tools.
 export HOME="$HOME_DIR"

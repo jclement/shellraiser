@@ -79,17 +79,17 @@ func runDaemon(dir, port string, noAuth, tailnet bool) {
 	// We own the lock for our lifetime.
 	_ = os.WriteFile(metaPath(dir), mustJSON(coordMeta{PID: os.Getpid(), Port: port, Sock: sockPath(dir)}), 0o600)
 
-	// Global config holds the password hash + passthrough toggles.
-	hc, err := loadHostConfig(dir)
-	if err != nil {
+	// Global config holds the password hash + passthrough toggles. One source of
+	// truth (the package global) so auth and the /api/config endpoint agree.
+	if hostCfg, err = loadHostConfig(dir); err != nil {
 		fatal("config: %v", err)
 	}
-	am := auth.New(hc.PasswordHash, func(hash string) error {
-		hc.PasswordHash = hash
-		return saveHostConfig(dir, hc)
+	configDir = dir
+	am := auth.New(hostCfg.PasswordHash, func(hash string) error {
+		hostCfg.PasswordHash = hash
+		return saveHostConfig(dir, hostCfg)
 	}, noAuth)
 	am.Logf = func(format string, a ...any) { ui.Info("auth", format, a...) }
-	hostCfg = hc // expose to ensureWorker for ssh/git passthrough
 
 	// Coordinator SSH key: signs tunnels to workers; its pubkey is injected into
 	// each worker (so only we can -L through their sshd).

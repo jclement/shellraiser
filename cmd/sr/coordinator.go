@@ -199,6 +199,34 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// handleConfig gets/sets the global passthrough toggles from the UI settings.
+func (c *Coordinator) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" {
+		var req struct {
+			SSHPassthrough *bool `json:"sshPassthrough"`
+			GitPassthrough *bool `json:"gitPassthrough"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if req.SSHPassthrough != nil {
+			hostCfg.SSHPassthrough = *req.SSHPassthrough
+		}
+		if req.GitPassthrough != nil {
+			hostCfg.GitPassthrough = *req.GitPassthrough
+		}
+		if err := saveHostConfig(configDir, hostCfg); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	writeJSON(w, map[string]any{
+		"sshPassthrough": hostCfg.SSHPassthrough,
+		"gitPassthrough": hostCfg.GitPassthrough,
+	})
+}
+
 // handlePortMap maps/unmaps a worker port to a host-loopback port via SSH -L.
 func (c *Coordinator) handlePortMap(w http.ResponseWriter, r *http.Request) {
 	id, action := r.PathValue("id"), r.PathValue("action")
@@ -266,6 +294,8 @@ func (c *Coordinator) serveShell(w http.ResponseWriter, r *http.Request) {
 func (c *Coordinator) httpHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/workers", c.handleAPIWorkers)
+	mux.HandleFunc("GET /api/config", c.handleConfig)
+	mux.HandleFunc("POST /api/config", c.handleConfig)
 	mux.HandleFunc("GET /api/workers/{id}/ports", c.handlePortList)
 	mux.HandleFunc("POST /api/workers/{id}/ports/{port}/{action}", c.handlePortMap)
 	mux.HandleFunc("POST /api/workers/{id}/{action}", c.handleWorkerAction)

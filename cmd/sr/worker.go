@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -40,6 +41,46 @@ func ensureAgentsVolume() {
 	if exec.Command("docker", "volume", "inspect", agentsVolume).Run() != nil {
 		_, _ = dockerRun("volume", "create", agentsVolume)
 	}
+}
+
+// sshGitMounts returns the docker -v/-e args for SSH/git passthrough, honoring
+// the global config toggles. The SSH agent socket is engine-aware: on a Docker
+// Desktop / OrbStack VM engine (macOS/Windows) the host agent is bridged at
+// /run/host-services/ssh-auth.sock; on a native Linux engine it's $SSH_AUTH_SOCK.
+func sshGitMounts() []string {
+	var out []string
+	home, _ := os.UserHomeDir()
+	if hostCfg.SSHPassthrough {
+		if sock := agentSocket(); sock != "" {
+			out = append(out, "-v", sock+":/ssh-agent", "-e", "SSH_AUTH_SOCK=/ssh-agent")
+		}
+		if home != "" {
+			if st, err := os.Stat(filepath.Join(home, ".ssh")); err == nil && st.IsDir() {
+				out = append(out, "-v", filepath.Join(home, ".ssh")+":/ssh-host:ro")
+			}
+		}
+	}
+	if hostCfg.GitPassthrough && home != "" {
+		if gc := filepath.Join(home, ".gitconfig"); fileExists(gc) {
+			out = append(out, "-v", gc+":/home/ubuntu/.gitconfig:ro")
+		}
+	}
+	return out
+}
+
+// agentSocket resolves the host SSH agent socket path to bind into the worker.
+func agentSocket() string {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		// The docker engine runs in a VM; Docker Desktop/OrbStack bridge the host
+		// agent to this well-known in-VM path.
+		return "/run/host-services/ssh-auth.sock"
+	}
+	return os.Getenv("SSH_AUTH_SOCK") // native Linux engine
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }
 
 func containerName(id string) string { return "sr_" + id }
@@ -201,6 +242,12 @@ func ensureWorker(id, project, image string) (*Worker, error) {
 		ensureAgentsVolume()
 		args = append(args, "-v", agentsVolume+":/agents:ro")
 	}
+
+	// SSH/git passthrough (global opt-in): forward the host SSH agent (YubiKey
+	// included) + bind ~/.ssh config and ~/.gitconfig so git/ssh "just work"
+	// inside the sandbox. Off by default — it exposes your agent/keys to the
+	// untrusted worker.
+	args = append(args, sshGitMounts()...)
 
 	args = append(args, image)
 	if _, err := dockerRun(args...); err != nil {

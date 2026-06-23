@@ -22,8 +22,11 @@ type hostConfig struct {
 }
 
 // hostCfg is the loaded global config, set by the daemon at startup and read by
-// ensureWorker for the ssh/git passthrough toggles.
-var hostCfg hostConfig
+// ensureWorker for the ssh/git passthrough toggles. configDir is where it lives.
+var (
+	hostCfg   hostConfig
+	configDir string
+)
 
 func hostConfigPath(dir string) string { return filepath.Join(dir, "config.toml") }
 

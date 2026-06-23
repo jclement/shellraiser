@@ -905,22 +905,31 @@ function showSetPassword(hint) {
   b.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
 }
 
-// Settings modal (signed in): change password.
+// Settings modal (signed in): change password + global passthrough toggles.
 async function openSettings() {
+  let cfg = { sshPassthrough: false, gitPassthrough: false };
+  try { cfg = await capi('GET', '/api/config'); } catch (_) {}
   const v = await modal({
     title: 'Settings',
-    bodyHTML: '<div class="text-muted">Change the coordinator password (used on localhost and the tailnet).</div>',
+    bodyHTML: '<div class="text-muted">Change the password, and choose whether new workers can use your host SSH agent (YubiKey) and git config. Passthrough exposes those to the sandbox — enable only if you trust what runs there.</div>',
     fields: [
-      { name: 'p1', label: 'New password (min 6)', type: 'password' },
+      { name: 'ssh', label: 'Forward host SSH agent + ~/.ssh into workers', type: 'checkbox', value: cfg.sshPassthrough },
+      { name: 'git', label: 'Bind host ~/.gitconfig into workers', type: 'checkbox', value: cfg.gitPassthrough },
+      { name: 'p1', label: 'New password (blank = unchanged)', type: 'password' },
       { name: 'p2', label: 'Confirm', type: 'password' },
     ],
-    actions: [{ label: 'Cancel', value: null }, { label: 'Change password', primary: true }],
+    actions: [{ label: 'Cancel', value: null }, { label: 'Save', primary: true }],
   });
   if (!v) return;
-  if (!v.p1 || v.p1.length < 6) { toast('Password must be at least 6 characters'); return; }
-  if (v.p1 !== v.p2) { toast('Passwords do not match'); return; }
-  try { await capi('POST', '/api/auth/password', { password: v.p1 }); toast('Password changed', 'ok'); }
-  catch (e) { toast(e.message); }
+  try {
+    await capi('POST', '/api/config', { sshPassthrough: v.ssh, gitPassthrough: v.git });
+  } catch (e) { toast(e.message); return; }
+  if (v.p1) {
+    if (v.p1.length < 6) { toast('Password must be at least 6 characters'); return; }
+    if (v.p1 !== v.p2) { toast('Passwords do not match'); return; }
+    try { await capi('POST', '/api/auth/password', { password: v.p1 }); } catch (e) { toast(e.message); return; }
+  }
+  toast('Settings saved (passthrough applies to newly-started workers)', 'ok');
 }
 
 async function initApp(authEnabled) {
