@@ -243,27 +243,26 @@ OrbStack / Colima) and warn if the project path is outside the file-sharing root
 
 ---
 
-## Phased build plan
+## Phased build plan — status
 
-1. ✅ **Coordinator skeleton + single-worker proxy.** `cmd/sb`: ensure image, run
-   one worker (loopback API port), serve UI on one port. *(Done — commit 3372d6c.)*
-2. **Coordinator core + unified UI.** Registry (docker-labels source of truth);
-   multi-worker `/w/<id>/` proxy; hardened `ensureWorker` (per-worker network,
-   worker token, resource caps); worker-token enforcement; coordinator auth before
-   proxy (HTTP+WS); project→worktree→session sidebar; cross-project agents view;
-   container controls (stop/restart/nuke) in UI. Daemon (double-fork, unix socket,
-   reconcile); `sb` subcommands; density (lazy services, idle auto-stop).
-3. **Dynamic SSH port-mapper.** Persistent `x/crypto/ssh` client per worker;
-   `net.Listen` per mapping; auto-map `ports`, toggle discovered; loopback bind
-   (+ tailnet later); reserved denylist; hardened worker sshd.
-4. **Tailscale via tsnet.** Expose UI + mapped ports on the tailnet; state in the
-   global dir; passkey still required; refuse `--no-auth` + tailnet.
-5. **Embed + ship.** Embed Dockerfile template + worker binaries + assets; build
-   `sb-<hash>` locally; custom base image; goreleaser + Homebrew; drop the registry
-   image + CI image build.
-6. **Shared agents + opt-out.** Creds-only `:ro` mount + per-worker
-   `CLAUDE_CONFIG_DIR`; `sb login` single-writer; auth fully on the coordinator;
-   retire the per-box UI.
+1. ✅ **Coordinator skeleton + single-worker proxy.**
+2. ✅ **Coordinator core + unified UI.** Docker-label registry; multi-worker
+   `/w/<id>/` proxy; hardened `ensureWorker` (per-worker network, token, caps);
+   coordinator auth before proxy (HTTP+WS); project rail; container controls;
+   self-daemonizing coordinator (double-fork, flock, unix-socket control plane,
+   reconcile); `sb` subcommands; density (idle auto-stop + lazy-resume).
+3. ✅ **Dynamic SSH port-mapper.** `x/crypto/ssh` client per worker; loopback-only
+   binds; auto-map `ports`, UI toggle for discovered; reserved denylist; hardened
+   worker sshd.
+4. ✅ **Tailscale via tsnet.** `sb --tailnet` serves the gated UI on a host-side
+   tsnet node (state in the global dir); passkey still required; `--no-auth +
+   --tailnet` refused. *(Per-port tailnet exposure + RP-ID pinning: see STATUS.)*
+5. ✅ **Embed + ship.** Embedded Dockerfile assets + cross-compiled worker
+   binaries; local `sb-base` + content-hash overlay build; custom base/dockerfile;
+   postgres off-by-default; goreleaser + Homebrew; no registry.
+6. ✅ **Shared agents + opt-out.** Creds-only `:ro` mount + per-worker
+   `CLAUDE_CONFIG_DIR`/`CODEX_HOME`; `sb login` single-writer; `isolated_agents`
+   opt-out. Auth lives on the coordinator.
 
-Each phase: implemented, tested (docker + curl + Playwright), documented, committed.
-Nothing half-built.
+Each phase was implemented, tested (docker + curl + Playwright), documented, and
+committed.

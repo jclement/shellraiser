@@ -67,7 +67,7 @@ func liveCoordinator(dir string) (*coordMeta, bool) {
 // runDaemon is the detached coordinator process (sb __daemon). It single-
 // instances via an exclusive flock, serves the UI + control socket, and exits if
 // another daemon already holds the lock.
-func runDaemon(dir, port string, noAuth bool) {
+func runDaemon(dir, port string, noAuth, tailnet bool) {
 	lf, err := os.OpenFile(lockPath(dir), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		fatal("daemon lock: %v", err)
@@ -96,6 +96,9 @@ func runDaemon(dir, port string, noAuth bool) {
 	co := newCoordinator(port, am)
 	co.pm = newPortMapper(signer)
 	co.reg.reconcile() // re-adopt any workers from a previous run
+	if tailnet {
+		go serveTailnet(co, dir)
+	}
 	if err := co.Run(sockPath(dir)); err != nil {
 		fatal("%v", err)
 	}
@@ -103,11 +106,11 @@ func runDaemon(dir, port string, noAuth bool) {
 
 // ensureCoordinator returns the meta of a running daemon, spawning a detached one
 // if none is alive. The first sb in any shell starts the daemon; the rest attach.
-func ensureCoordinator(dir, port string, noAuth bool) (*coordMeta, error) {
+func ensureCoordinator(dir, port string, noAuth, tailnet bool) (*coordMeta, error) {
 	if m, ok := liveCoordinator(dir); ok {
 		return m, nil
 	}
-	if err := spawnDaemon(dir, port, noAuth); err != nil {
+	if err := spawnDaemon(dir, port, noAuth, tailnet); err != nil {
 		return nil, err
 	}
 	// Wait for it to listen.
@@ -122,7 +125,7 @@ func ensureCoordinator(dir, port string, noAuth bool) (*coordMeta, error) {
 
 // spawnDaemon re-execs this binary as a detached background coordinator
 // (Setsid + stdio to a log file), so it outlives the launching shell.
-func spawnDaemon(dir, port string, noAuth bool) error {
+func spawnDaemon(dir, port string, noAuth, tailnet bool) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -130,6 +133,9 @@ func spawnDaemon(dir, port string, noAuth bool) error {
 	args := []string{"__daemon", "--port", port}
 	if noAuth {
 		args = append(args, "--no-auth")
+	}
+	if tailnet {
+		args = append(args, "--tailnet")
 	}
 	logf, err := os.OpenFile(filepath.Join(dir, "coordinator.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {

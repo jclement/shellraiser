@@ -62,7 +62,7 @@ func usage() {
   sb doctor       preflight checks (docker, image, perms)
   sb help         this message
 
-flags (for bare sb): --no-auth, --port <p>
+flags (for bare sb): --no-auth, --port <p>, --tailnet (expose UI on the tailnet)
 `)
 }
 
@@ -70,13 +70,15 @@ flags (for bare sb): --no-auth, --port <p>
 // registered as a worker, then serve. (Pre-daemon: this process IS the
 // coordinator and adopts every other managed worker via reconcile.)
 func cmdUp(args []string) {
-	var noAuth bool
+	var noAuth, tailnet bool
 	port := "7700"
 	project := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--no-auth":
 			noAuth = true
+		case "--tailnet":
+			tailnet = true
 		case "--port":
 			if i+1 < len(args) {
 				i++
@@ -87,6 +89,9 @@ func cmdUp(args []string) {
 				project = args[i]
 			}
 		}
+	}
+	if tailnet && noAuth {
+		fatal("--no-auth cannot be combined with --tailnet (an unauthenticated UI must never reach the tailnet)")
 	}
 	if project == "" {
 		project, _ = os.Getwd()
@@ -112,7 +117,7 @@ func cmdUp(args []string) {
 	if err != nil {
 		fatal("%v", err)
 	}
-	m, err := ensureCoordinator(dir, port, noAuth)
+	m, err := ensureCoordinator(dir, port, noAuth, tailnet)
 	if err != nil {
 		fatal("%v", err)
 	}
@@ -128,11 +133,13 @@ func cmdUp(args []string) {
 // cmdDaemon is the hidden detached-coordinator entrypoint (sb __daemon).
 func cmdDaemon(args []string) {
 	port := "7700"
-	noAuth := false
+	noAuth, tailnet := false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--no-auth":
 			noAuth = true
+		case "--tailnet":
+			tailnet = true
 		case "--port":
 			if i+1 < len(args) {
 				i++
@@ -144,7 +151,7 @@ func cmdDaemon(args []string) {
 	if err != nil {
 		fatal("%v", err)
 	}
-	runDaemon(dir, port, noAuth)
+	runDaemon(dir, port, noAuth, tailnet)
 }
 
 // cmdDown stops every worker and shuts the coordinator down (end of day).

@@ -29,6 +29,10 @@ single-box model the worker is derived from.)
   opt-out. *(Verified.)*
 - **CLI** — `sb`, `ls`/`status` (color dashboard), `stop`, `nuke`, `logs`,
   `login`, `down`, `doctor`. goreleaser → Homebrew (`sb`).
+- **Tailscale via `tsnet`** — `sb --tailnet` exposes the UI on a single
+  host-side tailnet node (state in `~/.config/sbox/tsnet`), serving the same
+  gated handler over HTTPS so passkey auth still applies; `--no-auth + --tailnet`
+  is refused. *(Node init + refusal verified; full exposure needs your tailnet.)*
 
 ## Inherited from v1 (the worker backend)
 
@@ -36,8 +40,10 @@ single-box model the worker is derived from.)
   ring-buffer replay + WS reconnect; activity/ding; port detection; `/p/` proxy;
   code-server `/edit`; opt-in postgres + `/db`; mobile keyboard chrome.
 
-## Not yet done
+## Remaining hardening
 
-- **Tailscale via `tsnet`** (host-side single node + UI/port exposure on the
-  tailnet). The in-container Tailscale path from v1 still works in the meantime.
-- RP-ID pinning to an enumerated origin set (lands with tsnet).
+- RP-ID pinning to an enumerated origin set (localhost + tsnet MagicDNS).
+  Currently the WebAuthn RP-ID is derived per-origin from `Host`, so you enroll a
+  passkey once per origin (localhost vs the tailnet name) — functional, but
+  pinning would tighten it.
+- Exposing mapped dev-server ports (not just the UI) on the tailnet IP.

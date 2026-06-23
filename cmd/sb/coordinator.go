@@ -261,9 +261,9 @@ func (c *Coordinator) serveShell(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, sub, path)
 }
 
-// Run serves the UI (TCP) and, if sockPath is set, the control plane (unix
-// socket) until the process exits.
-func (c *Coordinator) Run(sockPath string) error {
+// httpHandler builds the full gated HTTP handler (UI + proxy + auth), shared by
+// the local TCP listener and the optional tailnet (tsnet) listener.
+func (c *Coordinator) httpHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/workers", c.handleAPIWorkers)
 	mux.HandleFunc("GET /api/workers/{id}/ports", c.handlePortList)
@@ -275,6 +275,13 @@ func (c *Coordinator) Run(sockPath string) error {
 	})
 	c.auth.Mount(mux)
 	mux.HandleFunc("/", c.serveShell)
+	return c.gate(mux)
+}
+
+// Run serves the UI (TCP) and, if sockPath is set, the control plane (unix
+// socket) until the process exits.
+func (c *Coordinator) Run(sockPath string) error {
+	handler := c.httpHandler()
 
 	go func() {
 		t := time.NewTicker(15 * time.Second)
@@ -315,7 +322,7 @@ func (c *Coordinator) Run(sockPath string) error {
 		ui.Info("auth", "register your first passkey with bootstrap code: %s", c.auth.BootstrapCode())
 	}
 	ui.Ready("http://" + addr + "/")
-	return http.ListenAndServe(addr, c.gate(mux))
+	return http.ListenAndServe(addr, handler)
 }
 
 // gate enforces passkey auth before proxying. The SPA shell and /api/auth/* are
