@@ -199,11 +199,13 @@ cmd_start() {
   while IFS= read -r p; do [ -n "$p" ] && mounts+=(-p "$p:$p"); done < <(config_ports "$project")
 
   # SSH (key-only) with port forwarding: publish host $sshport → container :22.
+  # A pre-shared key is optional — the web UI's "Copy SSH" button mints ephemeral
+  # keys on demand. If you have one, it's added as a persistent authorized key.
   if [ "$ssh" -eq 1 ]; then
+    mounts+=(-p "$sshport:22" -e SLOPBOX_SSH=1 -e "SLOPBOX_SSH_HOST_PORT=$sshport")
     local key="$sshkey"
     [ -z "$key" ] && for k in "$HOME/.ssh/id_ed25519.pub" "$HOME/.ssh/id_rsa.pub"; do [ -f "$k" ] && key="$k" && break; done
-    [ -n "$key" ] && [ -f "$key" ] || die "ssh: no public key (use --ssh-key PATH or create ~/.ssh/id_ed25519.pub)"
-    mounts+=(-p "$sshport:22" -e SLOPBOX_SSH=1 -e "SLOPBOX_SSH_PUBKEY=$(cat "$key")")
+    [ -n "$key" ] && [ -f "$key" ] && mounts+=(-e "SLOPBOX_SSH_PUBKEY=$(cat "$key")")
   fi
   # Tailscale: auto-join with TAILSCALE_KEY, or --tailscale for manual login.
   [ -n "${TAILSCALE_KEY:-}" ] && mounts+=(-e "TAILSCALE_KEY=$TAILSCALE_KEY")

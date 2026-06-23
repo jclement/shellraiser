@@ -123,6 +123,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
 	mux.HandleFunc("GET /api/ports", s.handlePorts)
+	mux.HandleFunc("POST /api/ssh/command", s.handleSSHCommand)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /ws/term/{id}", s.handleTermWS)
 
@@ -254,6 +255,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"worktreesDir": s.worktreesDir,
 		"postgres":     s.cfg.PostgresEnabled(),
 		"editor":       s.cfg.CodeServerEnabled(),
+		"ssh":          os.Getenv("SLOPBOX_SSH") == "1",
 	})
 }
 

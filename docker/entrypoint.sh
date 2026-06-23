@@ -151,14 +151,12 @@ fi
 start_sshd() {
   local SSHDIR="$HOME_DIR/.ssh" KEYS HK PORT_SSH
   SSHDIR="$HOME_DIR/.ssh"; KEYS="$SSHDIR/authorized_keys"; HK="$SSHDIR/host_keys"
-  mkdir -p "$HK"
+  mkdir -p "$HK"; touch "$KEYS"
   if [ -n "${SLOPBOX_SSH_PUBKEY:-}" ] && ! grep -qxF "$SLOPBOX_SSH_PUBKEY" "$KEYS" 2>/dev/null; then
     echo "$SLOPBOX_SSH_PUBKEY" >> "$KEYS"
   fi
-  if [ ! -s "$KEYS" ]; then
-    echo "slopbox: ⚠ SSH enabled but no authorized key — set SLOPBOX_SSH_PUBKEY. sshd not started."
-    return
-  fi
+  # sshd starts even with no pre-shared key — the web UI's "Copy SSH" button mints
+  # short-lived ephemeral keys on demand (key-only auth, so an empty file is safe).
   chown "$USERNAME:$USERNAME" "$SSHDIR" "$KEYS"; chmod 700 "$SSHDIR"; chmod 600 "$KEYS"
   [ -f "$HK/ssh_host_ed25519_key" ] || ssh-keygen -q -t ed25519 -f "$HK/ssh_host_ed25519_key" -N ""
   chmod 600 "$HK"/* 2>/dev/null || true

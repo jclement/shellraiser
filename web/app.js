@@ -154,6 +154,24 @@ async function loadInfo() {
   const db = $('#db-btn');
   db.classList.toggle('hidden', !state.info.postgres);
   db.onclick = () => window.open('/db/', '_blank');
+  const ssh = $('#ssh-copy');
+  ssh.classList.toggle('hidden', !state.info.ssh);
+  ssh.onclick = copySSHCommand;
+}
+
+// Mint a short-lived SSH key + a ready-to-paste command that forwards every
+// running port, and offer to copy it.
+async function copySSHCommand() {
+  let res;
+  try { res = await api('POST', '/api/ssh/command', {}); } catch (e) { toast(e.message); return; }
+  const safe = res.command.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const body = `<div class="mb-2 text-muted">Run this on your machine — forwards ${res.ports.length} port(s) via <span class="text-app">${res.host}:${res.port}</span>, valid ~${Math.round(res.ttlSeconds / 60)} min.</div>`
+    + `<pre class="max-h-56 overflow-auto rounded border border-app bg-panel2 p-2 text-[11px] text-app" style="white-space:pre-wrap">${safe}</pre>`;
+  const v = await modal({ title: 'SSH command (ephemeral)', bodyHTML: body, actions: [{ label: 'Close', value: null }, { label: 'Copy', primary: true, value: 'copy' }] });
+  if (v === 'copy') {
+    try { await navigator.clipboard.writeText(res.command); toast('SSH command copied', 'ok'); }
+    catch (_) { toast('Copy failed — select the text in the box'); }
+  }
 }
 
 const BUILTIN_LAUNCH = [
