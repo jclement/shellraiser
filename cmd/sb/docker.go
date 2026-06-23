@@ -72,6 +72,12 @@ func containerEnv(name, key string) string {
 	return ""
 }
 
+// removeNetwork best-effort deletes a user-defined network (ignores "in use" /
+// "not found").
+func removeNetwork(name string) error {
+	return exec.Command("docker", "network", "rm", name).Run()
+}
+
 // ensureNetwork creates a user-defined bridge network if it does not exist, so a
 // danger-mode worker is L3-isolated from its siblings (the default bridge lets
 // any container reach every other container's published-internally services).

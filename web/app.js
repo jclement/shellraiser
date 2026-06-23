@@ -54,7 +54,15 @@ window.__slopbox = state; // exposed for automated tests
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 
-async function api(method, path, body) {
+// The coordinator serves one UI for many projects. When the shell is mounted
+// under /w/<id>/, every WORKER call (api/ws/ports/db/edit/p) is prefixed with
+// that base; AUTH and the project list are coordinator routes (unprefixed).
+const BASE = (location.pathname.match(/^\/w\/[^/]+/) || [''])[0];
+const PROJECT_ID = BASE ? BASE.split('/')[2] : null;
+state.projectId = PROJECT_ID;
+state.projects = [];
+
+async function request(method, path, body) {
   const res = await fetch(path, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : {},
@@ -67,6 +75,10 @@ async function api(method, path, body) {
   }
   return res.status === 204 ? null : res.json();
 }
+
+// api → the active worker (prefixed under /w/<id>/). capi → the coordinator.
+const api = (method, path, body) => request(method, BASE + path, body);
+const capi = (method, path, body) => request(method, path, body);
 
 function toast(msg, kind = 'error') {
   const t = el('div', 'pointer-events-auto rounded-md border px-3 py-2 text-sm text-white shadow-lg');
@@ -144,6 +156,58 @@ async function promptModal(title, field, confirmLabel = 'OK') {
   return v ? v[field.name] : null;
 }
 
+// ---- projects (cross-project rail) ----------------------------------------
+
+async function loadProjects() {
+  try { state.projects = await capi('GET', '/api/workers'); } catch (_) { state.projects = []; }
+  renderProjects();
+}
+
+function renderProjects() {
+  const nav = $('#projects');
+  const section = $('#projects-section');
+  if (!nav) return;
+  // Only show the rail when the coordinator fronts more than one project (or we
+  // are at the coordinator root with a project list to choose from).
+  const show = state.projects.length > 0 && (state.projects.length > 1 || !PROJECT_ID);
+  section.classList.toggle('hidden', !show);
+  nav.innerHTML = '';
+  for (const p of state.projects) {
+    const active = p.id === state.projectId;
+    const row = el('div', `group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm ${active ? 'row-sel' : 'hover-row'}`);
+    const ic = el('span', active ? 'text-accent' : 'text-faint'); ic.innerHTML = svg('box', 'icon icon-sm'); row.appendChild(ic);
+    const name = el('span', 'truncate ' + (active ? 'text-app font-medium' : 'text-muted'), p.name); name.title = p.project; row.appendChild(name);
+    const st = el('span', 'ml-auto flex shrink-0 items-center gap-1');
+    if (p.state !== 'running') st.appendChild(el('span', 'text-[10px] text-faint', p.state));
+    // container controls
+    const kebab = el('button', 'iconbtn px-1 opacity-0 transition group-hover:opacity-100'); kebab.title = 'Manage'; kebab.innerHTML = svg('trash', 'icon icon-sm');
+    kebab.onclick = (ev) => { ev.stopPropagation(); manageProject(p); };
+    st.appendChild(kebab);
+    row.appendChild(st);
+    row.onclick = () => { if (!active) location.href = '/w/' + p.id + '/'; };
+    nav.appendChild(row);
+  }
+}
+
+async function manageProject(p) {
+  const v = await modal({
+    title: `Manage ${p.name}`,
+    bodyHTML: `<div class="text-muted">Stop pauses the container (data kept). Nuke removes the container, its volume, and network — your project source on disk is never touched.</div>`,
+    actions: [
+      { label: 'Cancel', value: null },
+      { label: p.state === 'running' ? 'Stop' : 'Start', value: p.state === 'running' ? 'stop' : 'start' },
+      { label: 'Nuke', danger: true, value: 'nuke' },
+    ],
+  });
+  if (!v) return;
+  if (v === 'nuke' && !(await confirmModal('Nuke project', `Remove <b class="text-app">${p.name}</b>'s container + volume + network?`, { danger: true, confirmLabel: 'Nuke' }))) return;
+  try {
+    await capi('POST', '/api/workers/' + p.id + '/' + v, {});
+    if (v === 'nuke' && p.id === state.projectId) { location.href = '/'; return; }
+    await loadProjects();
+  } catch (e) { toast(e.message); }
+}
+
 // ---- data loading ---------------------------------------------------------
 
 async function loadInfo() {
@@ -153,7 +217,7 @@ async function loadInfo() {
   if (!state.selected) state.selected = state.info.repoDir;
   const db = $('#db-btn');
   db.classList.toggle('hidden', !state.info.postgres);
-  db.onclick = () => window.open('/db/', '_blank');
+  db.onclick = () => window.open(BASE + '/db/', '_blank');
   const ssh = $('#ssh-copy');
   ssh.classList.toggle('hidden', !state.info.ssh);
   ssh.onclick = copySSHCommand;
@@ -301,7 +365,7 @@ function renderWorktrees() {
     actions.appendChild(ren);
     if (state.info && state.info.editor) {
       const edit = el('button', 'iconbtn px-1'); edit.title = 'Open in code-server'; edit.innerHTML = svg('external', 'icon icon-sm');
-      edit.onclick = (ev) => { ev.stopPropagation(); window.open('/edit/?folder=' + encodeURIComponent(w.path), '_blank'); };
+      edit.onclick = (ev) => { ev.stopPropagation(); window.open(BASE + '/edit/?folder=' + encodeURIComponent(w.path), '_blank'); };
       actions.appendChild(edit);
     }
     if (!w.isMain) {
@@ -365,7 +429,7 @@ function portChip(p) {
   const a = el('a', 'btn px-1.5 py-0.5 text-center text-[11px]');
   a.textContent = p.port;
   a.title = `${p.process ? p.process + ' ' : ''}→ /p/${p.port}/ (proxied through slopbox)`;
-  a.href = `/p/${p.port}/`; // reach the internal port via the slopbox proxy
+  a.href = `${BASE}/p/${p.port}/`; // reach the internal port via the slopbox proxy
   a.target = '_blank';
   return a;
 }
@@ -533,7 +597,7 @@ function connectWS(id) {
   const rec = state.terms[id];
   if (!rec) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws/term/${id}`);
+  const ws = new WebSocket(`${proto}://${location.host}${BASE}/ws/term/${id}`);
   ws.binaryType = 'arraybuffer';
   rec.ws = ws;
   ws.onmessage = (ev) => {
@@ -599,7 +663,7 @@ async function killSession(id) {
 // ---- live status (SSE) + ding --------------------------------------------
 
 function connectEvents() {
-  const es = new EventSource('/api/events');
+  const es = new EventSource(BASE + '/api/events');
   es.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
     const s = state.sessions.find((x) => x.id === m.id);
@@ -758,15 +822,15 @@ function wire() {
 const SWA = window.SimpleWebAuthnBrowser;
 
 async function passkeyRegister(code, label) {
-  const opts = await api('POST', '/api/auth/register/begin', { code, label });
+  const opts = await capi('POST', '/api/auth/register/begin', { code, label });
   const att = await SWA.startRegistration({ optionsJSON: opts.publicKey });
-  await api('POST', '/api/auth/register/finish', att);
+  await capi('POST', '/api/auth/register/finish', att);
 }
 
 async function passkeyLogin() {
-  const opts = await api('POST', '/api/auth/login/begin', {});
+  const opts = await capi('POST', '/api/auth/login/begin', {});
   const asr = await SWA.startAuthentication({ optionsJSON: opts.publicKey });
-  await api('POST', '/api/auth/login/finish', asr);
+  await capi('POST', '/api/auth/login/finish', asr);
 }
 
 function loginErr(e) {
@@ -811,8 +875,22 @@ async function initApp(authEnabled) {
     $('#add-passkey').classList.remove('hidden');
     $('#add-passkey').onclick = addPasskey;
     $('#logout').classList.remove('hidden');
-    $('#logout').onclick = async () => { await api('POST', '/api/auth/logout', {}); location.reload(); };
+    $('#logout').onclick = async () => { await capi('POST', '/api/auth/logout', {}); location.reload(); };
   }
+
+  await loadProjects();
+
+  // Coordinator root (no project selected): jump to the first project, or show
+  // the empty state when nothing is registered yet.
+  if (!state.projectId) {
+    if (state.projects.length) { location.replace('/w/' + state.projects[0].id + '/'); return; }
+    $('#repo-name').textContent = 'no projects';
+    $('#empty-state').style.display = 'flex';
+    $('#empty-state').textContent = 'Run `sb` in a git repository to add a project.';
+    setInterval(loadProjects, 5000);
+    return;
+  }
+
   await loadInfo();
   await loadCommands();
   await loadWorktrees();
@@ -821,13 +899,14 @@ async function initApp(authEnabled) {
   connectEvents();
   setInterval(loadPorts, 5000);
   setInterval(loadWorktrees, 15000); // refresh git stats
+  setInterval(loadProjects, 10000);  // keep the project rail fresh
 }
 
 async function main() {
   fillIcons();
   applyTheme(currentTheme());
   let status = { enabled: false, authenticated: true };
-  try { status = await api('GET', '/api/auth/status'); } catch (_) {}
+  try { status = await capi('GET', '/api/auth/status'); } catch (_) {}
   if (status.enabled && !status.authenticated) {
     showLogin(status);
     return;

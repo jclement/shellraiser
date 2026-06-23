@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jclement/slopbox/internal/auth"
 	"github.com/jclement/slopbox/internal/ui"
 )
 
@@ -88,7 +89,8 @@ func cmdUp(args []string) {
 	}
 	project, _ = filepath.Abs(project)
 
-	if _, err := globalDir(); err != nil {
+	dir, err := globalDir()
+	if err != nil {
 		fatal("%v", err)
 	}
 	if !dockerAlive() {
@@ -101,15 +103,22 @@ func cmdUp(args []string) {
 		fatal("image %s not found — build it first (`mise run dev` / image build lands in Phase 5)", workerImage)
 	}
 
+	// Coordinator-owned passkey auth (one login for every project).
+	am, err := auth.New(filepath.Join(dir, "auth", "store.json"), "", "", noAuth)
+	if err != nil {
+		fatal("auth: %v", err)
+	}
+	am.Logf = func(format string, a ...any) { ui.Info("auth", format, a...) }
+
 	id := boxID(project)
 	ui.Boot("sb", "project", id, "path", project)
-	w, err := ensureWorker(id, project, noAuth)
+	w, err := ensureWorker(id, project)
 	if err != nil {
 		fatal("%v", err)
 	}
 	waitReady(w)
 
-	co := newCoordinator(port)
+	co := newCoordinator(port, am)
 	co.reg.put(w)
 	co.reg.reconcile() // adopt any other already-running workers
 	ui.Info("sb", "project %q → worker %s (api 127.0.0.1:%s)", id, w.Container, w.APIPort)

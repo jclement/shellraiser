@@ -76,8 +76,9 @@ func newToken() string {
 // ensureWorker starts (or re-adopts) a hardened worker container for project and
 // returns it populated with its live loopback ports. Hardening vs v1's bare run:
 // a per-worker docker network, resource caps, a loopback-published sshd, and a
-// coordinator-injected API token.
-func ensureWorker(id, project string, noAuth bool) (*Worker, error) {
+// coordinator-injected API token. The worker's own passkey auth is always off —
+// auth lives at the coordinator now; the token fences the loopback port.
+func ensureWorker(id, project string) (*Worker, error) {
 	w := &Worker{
 		ID:        id,
 		Project:   project,
@@ -117,9 +118,7 @@ func ensureWorker(id, project string, noAuth bool) (*Worker, error) {
 		"-e", "SLOP_ID=" + id,
 		"-e", "SLOPBOX_WORKER_TOKEN=" + w.Token,
 		"-e", "SLOPBOX_SSH=1",
-	}
-	if noAuth {
-		args = append(args, "-e", "SLOPBOX_NO_AUTH=1")
+		"-e", "SLOPBOX_NO_AUTH=1", // coordinator owns passkey auth; token fences the port
 	}
 	args = append(args, workerImage)
 	if _, err := dockerRun(args...); err != nil {

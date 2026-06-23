@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -10,26 +11,31 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jclement/slopbox/internal/auth"
 	"github.com/jclement/slopbox/internal/ui"
+	"github.com/jclement/slopbox/web"
 )
 
-// Coordinator fronts many workers behind one port. It serves the unified UI and
-// reverse-proxies each worker under /w/<id>/, injecting the worker's token so the
-// worker's gate accepts the hop. Docker is the source of truth (see Registry).
+// Coordinator fronts many workers behind one port. It serves the unified UI,
+// owns passkey auth (enforced before every proxy hop), and reverse-proxies each
+// worker's data routes under /w/<id>/, injecting the worker token. Docker is the
+// source of truth (see Registry).
 type Coordinator struct {
 	reg     *Registry
 	port    string
+	auth    *auth.Manager
 	mu      sync.Mutex
-	proxies map[string]*httputil.ReverseProxy // id → cached reverse proxy
+	proxies map[string]*httputil.ReverseProxy // id@port → cached reverse proxy
 }
 
-func newCoordinator(port string) *Coordinator {
-	return &Coordinator{reg: newRegistry(), port: port, proxies: map[string]*httputil.ReverseProxy{}}
+// dataRoutes are the /w/<id>/ sub-paths proxied to the worker; anything else
+// under /w/<id>/ is the (public) SPA shell, served from the coordinator's assets.
+var dataPrefixes = []string{"/api/", "/ws/", "/p/", "/db", "/edit"}
+
+func newCoordinator(port string, am *auth.Manager) *Coordinator {
+	return &Coordinator{reg: newRegistry(), port: port, auth: am, proxies: map[string]*httputil.ReverseProxy{}}
 }
 
-// proxyFor returns a reverse proxy to the worker's loopback API port, stripping
-// the /w/<id> prefix and injecting the worker token on every hop (HTTP + WS
-// upgrade alike — httputil handles the Upgrade since Go 1.20).
 func (c *Coordinator) proxyFor(w *Worker) *httputil.ReverseProxy {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -59,9 +65,18 @@ func (c *Coordinator) proxyFor(w *Worker) *httputil.ReverseProxy {
 	return p
 }
 
-// handleWorker routes /w/<id>/... to the right worker.
+// handleWorker routes /w/<id>/... — data routes proxy to the worker; everything
+// else is the SPA shell (so deep links like /w/<id>/ render the app).
 func (c *Coordinator) handleWorker(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	rest := strings.TrimPrefix(r.URL.Path, "/w/"+id)
+	if rest == "" {
+		rest = "/"
+	}
+	if !isDataRoute(rest) {
+		c.serveShell(w, r) // project deep-link → app shell
+		return
+	}
 	worker, ok := c.reg.get(id)
 	if !ok {
 		http.Error(w, "no such project: "+id, http.StatusNotFound)
@@ -74,10 +89,19 @@ func (c *Coordinator) handleWorker(w http.ResponseWriter, r *http.Request) {
 	c.proxyFor(worker).ServeHTTP(w, r)
 }
 
-// handleAPIWorkers lists registered projects for the coordinator shell.
+func isDataRoute(rest string) bool {
+	for _, p := range dataPrefixes {
+		if rest == p || strings.HasPrefix(rest, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// handleAPIWorkers lists registered projects for the rail.
 func (c *Coordinator) handleAPIWorkers(w http.ResponseWriter, r *http.Request) {
 	c.reg.reconcile()
-	var out []map[string]string
+	out := []map[string]string{}
 	for _, wk := range c.reg.list() {
 		out = append(out, map[string]string{
 			"id": wk.ID, "name": wk.Name, "project": wk.Project, "state": wk.State,
@@ -86,43 +110,65 @@ func (c *Coordinator) handleAPIWorkers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// handleRoot is a minimal coordinator landing until the unified shell lands: it
-// lists projects and links into each worker's UI at /w/<id>/.
-func (c *Coordinator) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+// handleWorkerAction performs a lifecycle action on a worker (stop/start/nuke).
+func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request) {
+	id, action := r.PathValue("id"), r.PathValue("action")
+	worker, ok := c.reg.get(id)
+	if !ok {
+		http.Error(w, "no such project", http.StatusNotFound)
+		return
+	}
+	var err error
+	switch action {
+	case "stop":
+		_, err = dockerRun("stop", worker.Container)
+	case "start":
+		if _, err = dockerRun("start", worker.Container); err == nil {
+			c.reg.adopt(id)
+		}
+	case "nuke":
+		_, _ = dockerRun("rm", "-f", worker.Container)
+		_, _ = dockerRun("volume", "rm", worker.Volume)
+		_ = removeNetwork(worker.Network)
+		c.reg.remove(id)
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	c.reg.reconcile()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<!doctype html><meta charset=utf-8><title>slopbox</title>`+
-		`<style>body{font:15px system-ui;background:#0f172a;color:#e2e8f0;margin:0;padding:2rem}`+
-		`a{color:#93c5fd;text-decoration:none}h1{font-size:1.1rem;color:#cbd5e1}`+
-		`.p{display:block;padding:.75rem 1rem;margin:.4rem 0;background:#1e293b;border-radius:.5rem}`+
-		`.s{color:#64748b;font-size:.8rem}</style>`)
-	fmt.Fprintf(w, `<h1>slopbox coordinator</h1>`)
-	workers := c.reg.list()
-	if len(workers) == 0 {
-		fmt.Fprint(w, `<p class=s>No projects registered. Run <code>sb</code> in a git repo.</p>`)
-		return
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// serveShell serves the embedded SPA: real asset paths (/app.js) resolve to the
+// asset; everything else (/, /w/<id>/…, unknown routes) falls back to the shell.
+func (c *Coordinator) serveShell(w http.ResponseWriter, r *http.Request) {
+	sub, _ := fs.Sub(web.Assets, ".")
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	if path == "" || strings.HasPrefix(r.URL.Path, "/w/") {
+		path = "index.html"
 	}
-	for _, wk := range workers {
-		fmt.Fprintf(w, `<a class=p href="/w/%s/"><b>%s</b> <span class=s>%s — %s</span></a>`,
-			wk.ID, htmlesc(wk.Name), wk.State, htmlesc(wk.Project))
+	if _, err := fs.Stat(sub, path); err != nil {
+		path = "index.html" // SPA fallback
 	}
+	http.ServeFileFS(w, r, sub, path)
 }
 
 // Run serves until the process exits.
 func (c *Coordinator) Run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/workers", c.handleAPIWorkers)
+	mux.HandleFunc("POST /api/workers/{id}/{action}", c.handleWorkerAction)
 	mux.HandleFunc("/w/{id}/", c.handleWorker)
 	mux.HandleFunc("/w/{id}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/w/"+r.PathValue("id")+"/", http.StatusFound)
 	})
-	mux.HandleFunc("/", c.handleRoot)
+	c.auth.Mount(mux)
+	mux.HandleFunc("/", c.serveShell)
 
-	// Background reconcile so the registry tracks docker reality.
 	go func() {
 		t := time.NewTicker(15 * time.Second)
 		defer t.Stop()
@@ -132,13 +178,48 @@ func (c *Coordinator) Run() error {
 	}()
 
 	addr := "127.0.0.1:" + c.port
+	if !c.auth.Enabled() {
+		ui.Warn("auth", "DISABLED — anyone who can reach %s controls every project", addr)
+	} else if c.auth.HasCredentials() {
+		ui.Info("auth", "passkey sign-in required (registered)")
+	} else {
+		ui.Info("auth", "register your first passkey with bootstrap code: %s", c.auth.BootstrapCode())
+	}
 	ui.Ready("http://" + addr + "/")
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, c.gate(mux))
 }
 
-func htmlesc(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
-	return r.Replace(s)
+// gate enforces passkey auth before proxying. The SPA shell and /api/auth/* are
+// public (the app gates itself via /api/auth/status); all data and control
+// routes require a session.
+func (c *Coordinator) gate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if coordPublic(r.URL.Path) || c.auth.Authenticated(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	})
+}
+
+func coordPublic(p string) bool {
+	switch p {
+	case "/", "/index.html", "/app.js", "/favicon.ico":
+		return true
+	}
+	if strings.HasPrefix(p, "/api/auth/") {
+		return true
+	}
+	// The project shell (deep link) is the public SPA; its data routes are gated.
+	if strings.HasPrefix(p, "/w/") {
+		parts := strings.SplitN(strings.TrimPrefix(p, "/w/"), "/", 2)
+		rest := "/"
+		if len(parts) == 2 {
+			rest = "/" + parts[1]
+		}
+		return !isDataRoute(rest)
+	}
+	return false
 }
 
 // writeJSON mirrors the worker's helper for the coordinator's small API.
