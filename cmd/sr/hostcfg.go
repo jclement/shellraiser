@@ -1,8 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/BurntSushi/toml"
 )
@@ -13,6 +17,9 @@ import (
 type hostConfig struct {
 	// PasswordHash is the bcrypt hash of the login password (managed via the UI).
 	PasswordHash string `toml:"password_hash"`
+	// Port is the localhost UI port — a stable, large, random port chosen on first
+	// run (less guessable / collision-prone than a fixed one). Override with --port.
+	Port int `toml:"port"`
 	// SSHPassthrough binds the host SSH agent + ~/.ssh config into every worker so
 	// git/ssh "just work" inside the sandbox. Default OFF — it exposes your SSH
 	// agent (and any key files) to the untrusted, danger-mode worker.
@@ -29,6 +36,36 @@ var (
 )
 
 func hostConfigPath(dir string) string { return filepath.Join(dir, "config.toml") }
+
+// resolveUIPort returns the persisted localhost UI port, choosing a stable random
+// high port on first run and saving it. Falls back to 7700 only if it can't pick
+// or persist one.
+func resolveUIPort(dir string) string {
+	c, _ := loadHostConfig(dir)
+	if c.Port != 0 {
+		return strconv.Itoa(c.Port)
+	}
+	p := randomHighPort()
+	c.Port = p
+	_ = saveHostConfig(dir, c)
+	return strconv.Itoa(p)
+}
+
+// randomHighPort returns a free TCP port in the 20000–60000 range (above the
+// common service range, below the typical ephemeral range).
+func randomHighPort() int {
+	for i := 0; i < 50; i++ {
+		var b [2]byte
+		_, _ = rand.Read(b[:])
+		p := 20000 + int(binary.BigEndian.Uint16(b[:]))%40000
+		ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p))
+		if err == nil {
+			ln.Close()
+			return p
+		}
+	}
+	return 7700
+}
 
 // loadHostConfig reads the global config (a missing file yields defaults).
 func loadHostConfig(dir string) (hostConfig, error) {

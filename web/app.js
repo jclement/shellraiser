@@ -244,7 +244,8 @@ const BUILTIN_LAUNCH = [
   { kind: 'claude', icon: 'claude', label: 'claude' },
   { kind: 'codex', icon: 'codex', label: 'codex' },
   { kind: 'shell', icon: 'terminal', label: 'shell' },
-  { kind: 'editor', icon: 'pencil', label: 'editor' },
+  { kind: 'editor', icon: 'pencil', label: 'editor' },          // helix/$EDITOR
+  { kind: 'editor', icon: 'pencil', label: 'fresh', args: ['fresh'], title: 'fresh' },
 ];
 
 async function loadCommands() {
@@ -261,7 +262,7 @@ function renderLaunchMenu() {
     b.onclick = () => { menu.classList.add('hidden'); onClick(); };
     return b;
   };
-  for (const b of BUILTIN_LAUNCH) menu.appendChild(item(b.icon, b.label, () => launch(b.kind)));
+  for (const b of BUILTIN_LAUNCH) menu.appendChild(item(b.icon, b.label, () => launch(b.kind, b.args, b.title)));
   if (state.commands.length) {
     menu.appendChild(el('div', 'my-1 border-t border-app'));
     for (const c of state.commands) menu.appendChild(item('play', c.name, () => launchCommand(c.name)));
@@ -485,11 +486,11 @@ function renderPorts() {
 
 // ---- sessions & terminals -------------------------------------------------
 
-async function launch(kind) {
+async function launch(kind, args, title) {
   if (!state.selected) { toast('Pick a worktree first'); return; }
   unlockAudio();
   try {
-    const s = await api('POST', '/api/sessions', { kind, cwd: state.selected });
+    const s = await api('POST', '/api/sessions', { kind, cwd: state.selected, args, title });
     await loadSessions();
     openTab(s);
   } catch (e) { toast(e.message); }

@@ -57,6 +57,25 @@ if [ ! -L /home/linuxbrew ]; then
   ln -s "$HOME_DIR/linuxbrew" /home/linuxbrew
 fi
 
+# Install Homebrew into that (persistent, default-prefix) location on first boot,
+# in the background so it never blocks startup. Because the prefix resolves to the
+# standard /home/linuxbrew/.linuxbrew, prebuilt bottles apply and `brew install`
+# is fast; everything lands in the home volume so it survives container recreates.
+ensure_brew() {
+  local PREFIX="/home/linuxbrew/.linuxbrew"
+  [ -x "$PREFIX/bin/brew" ] && return 0
+  echo "shellraiser: installing Homebrew in the background (first run)…"
+  (
+    run_user git clone --depth=1 https://github.com/Homebrew/brew "$PREFIX/Homebrew" >/dev/null 2>&1 \
+      && run_user mkdir -p "$PREFIX/bin" \
+      && run_user ln -sf ../Homebrew/bin/brew "$PREFIX/bin/brew" \
+      && run_user bash -lc 'brew update --quiet' >/dev/null 2>&1 \
+      && echo "shellraiser: Homebrew ready — try 'brew install <pkg>'" \
+      || echo "shellraiser: ⚠ Homebrew install failed (run it again later)"
+  ) &
+}
+ensure_brew
+
 # 2. Postgres + pgweb (default on; SHELLRAISER_POSTGRES=0 to disable). Fully
 #    non-fatal: if the data dir can't be secured (e.g. a Docker Desktop bind
 #    mount, where chmod 0700 fails) or init fails, the box still boots with the

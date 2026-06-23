@@ -71,7 +71,7 @@ flags (for bare sr): --no-auth, --port <p>, --tailnet (expose UI on the tailnet)
 // coordinator and adopts every other managed worker via reconcile.)
 func cmdUp(args []string) {
 	var noAuth, tailnet bool
-	port := "7700"
+	port := "" // empty → a stable random high port (persisted in the global config)
 	project := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -101,6 +101,9 @@ func cmdUp(args []string) {
 	dir, err := globalDir()
 	if err != nil {
 		fatal("%v", err)
+	}
+	if port == "" {
+		port = resolveUIPort(dir) // stable random high port, persisted
 	}
 	if !dockerAlive() {
 		fatal("docker is not running — start Docker Desktop and retry")
