@@ -108,7 +108,13 @@ func (c *Coordinator) resume(w *Worker) bool {
 	c.reg.adopt(w.ID)
 	if nw, ok := c.reg.get(w.ID); ok {
 		waitReady(nw)
-		return nw.State == "running" && nw.APIPort != ""
+		if nw.State == "running" && nw.APIPort != "" {
+			// The pre-stop ssh client + agent relay died with the old container
+			// process; drop them and re-forward ports/agent against the fresh one.
+			c.pm.CloseWorker(nw.ID)
+			c.onWorkerUp(nw)
+			return true
+		}
 	}
 	return false
 }

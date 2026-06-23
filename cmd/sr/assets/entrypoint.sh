@@ -38,10 +38,10 @@ ensure_code_server() {
 #    non-zero exit would otherwise abort the whole entrypoint.
 chown "$USERNAME:$USERNAME" "$HOME_DIR" 2>/dev/null || true
 mkdir -p "$HOME_DIR/.local/bin" "$HOME_DIR/.local/share/shellraiser" "$HOME_DIR/.local/state" \
-         "$HOME_DIR/.config" "$HOME_DIR/.cache" "$HOME_DIR/worktrees" "$HOME_DIR/linuxbrew"
+         "$HOME_DIR/.config/shellraiser" "$HOME_DIR/.cache" "$HOME_DIR/worktrees" "$HOME_DIR/linuxbrew"
 chown "$USERNAME:$USERNAME" \
   "$HOME_DIR/.local" "$HOME_DIR/.local/share" "$HOME_DIR/.local/state" \
-  "$HOME_DIR/.config" "$HOME_DIR/.cache" "$HOME_DIR/linuxbrew" 2>/dev/null || true
+  "$HOME_DIR/.config" "$HOME_DIR/.config/shellraiser" "$HOME_DIR/.cache" "$HOME_DIR/linuxbrew" 2>/dev/null || true
 chown -R "$USERNAME:$USERNAME" \
   "$HOME_DIR/.local/bin" "$HOME_DIR/.local/share/shellraiser" "$HOME_DIR/worktrees" 2>/dev/null || true
 
@@ -189,10 +189,18 @@ PubkeyAuthentication yes
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
-# Coordinator opens only -L tunnels to in-container loopback services; lock the
-# rest down so a compromised worker can't pivot outward through our SSH channel.
-AllowTcpForwarding local
+# The coordinator (the only authorized key) opens -L tunnels to in-container
+# loopback services and ONE remote unix forward (the host SSH-agent relay
+# socket). AllowTcpForwarding must be `all` because OpenSSH gates the remote
+# *direction* — including the streamlocal/unix relay — on it; we then re-narrow:
+#   PermitOpen      → -L may only reach in-container loopback (port mapping)
+#   PermitListen none→ no TCP -R (can't expose a worker port outward)
+#   AllowStreamLocalForwarding remote → only the agent-relay unix -R is allowed
+AllowTcpForwarding all
 PermitOpen 127.0.0.1:* [::1]:*
+PermitListen none
+AllowStreamLocalForwarding remote
+StreamLocalBindUnlink yes
 GatewayPorts no
 AllowAgentForwarding no
 PermitTunnel no

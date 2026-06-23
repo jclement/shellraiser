@@ -118,6 +118,11 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 	co.pm = newPortMapper(signer, tl)
 	co.ports = newPortStore(dir)
 	co.reg.reconcile() // re-adopt any workers from a previous run
+	for _, w := range co.reg.list() {
+		if w.State == "running" && w.APIPort != "" {
+			co.onWorkerUp(w) // re-forward ports + relay the agent for survivors
+		}
+	}
 	if ts != nil {
 		go serveTailnetUI(co, ts)
 	}
@@ -131,7 +136,7 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 		}
 		if !w.BareMetal {
 			waitReady(w)
-			go co.autoMap(w)
+			co.onWorkerUp(w)
 		}
 		co.reg.put(w)
 		co.act.touch(id)

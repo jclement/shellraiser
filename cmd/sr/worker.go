@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
@@ -122,12 +121,20 @@ func isBareMetal(project string) bool {
 // the global config toggles. The SSH agent socket is engine-aware: on a Docker
 // Desktop / OrbStack VM engine (macOS/Windows) the host agent is bridged at
 // /run/host-services/ssh-auth.sock; on a native Linux engine it's $SSH_AUTH_SOCK.
+// agentRelaySock is where the coordinator exposes the relayed host SSH agent
+// inside every worker (see PortMapper.ForwardAgent). SSH_AUTH_SOCK points here.
+const agentRelaySock = "/home/ubuntu/.config/shellraiser/ssh-agent.sock"
+
 func sshGitMounts() []string {
 	var out []string
 	home, _ := os.UserHomeDir()
 	if hostCfg.SSHPassthrough {
-		if sock := agentSocket(); sock != "" {
-			out = append(out, "-v", sock+":/ssh-agent", "-e", "SSH_AUTH_SOCK=/ssh-agent")
+		// The host agent itself is relayed over the SSH tunnel (engine-agnostic;
+		// a bind-mounted socket does not cross the Colima/Docker-Desktop VM
+		// boundary). We only point SSH_AUTH_SOCK at the relay path here; the
+		// coordinator stands the relay up once the worker's sshd is reachable.
+		if hostAgentSocket() != "" {
+			out = append(out, "-e", "SSH_AUTH_SOCK="+agentRelaySock)
 		}
 		if home != "" {
 			if st, err := os.Stat(filepath.Join(home, ".ssh")); err == nil && st.IsDir() {
@@ -143,18 +150,13 @@ func sshGitMounts() []string {
 	return out
 }
 
-// agentSocket resolves the host SSH agent socket path to bind into the worker.
-func agentSocket() string {
+// hostAgentSocket resolves the host SSH agent socket the coordinator relays into
+// workers: an explicit override (e.g. 1Password) else the host's $SSH_AUTH_SOCK.
+func hostAgentSocket() string {
 	if hostCfg.SSHAuthSock != "" {
-		return hostCfg.SSHAuthSock // explicit override (e.g. the 1Password agent)
+		return hostCfg.SSHAuthSock
 	}
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-		// The docker engine runs in a VM; Docker Desktop/OrbStack bridge the host
-		// agent (whatever the host SSH_AUTH_SOCK points at — incl. 1Password) to
-		// this well-known in-VM path.
-		return "/run/host-services/ssh-auth.sock"
-	}
-	return os.Getenv("SSH_AUTH_SOCK") // native Linux engine
+	return os.Getenv("SSH_AUTH_SOCK")
 }
 
 func fileExists(p string) bool {

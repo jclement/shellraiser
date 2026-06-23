@@ -145,8 +145,8 @@ func (c *Coordinator) controlMux() *http.ServeMux {
 			return
 		}
 		if !worker.BareMetal {
-			waitReady(worker)    // don't hand back a URL until the container serves
-			go c.autoMap(worker) // forward declared ports (bare-metal needs none)
+			waitReady(worker) // don't hand back a URL until the container serves
+			c.onWorkerUp(worker)
 		}
 		c.reg.put(worker)
 		c.act.touch(id)
@@ -360,6 +360,23 @@ func (c *Coordinator) handlePortList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]int{"container": cp, "host": hp})
 	}
 	writeJSON(w, out)
+}
+
+// onWorkerUp wires a freshly-running container worker into the routing layer:
+// forwards its declared ports and relays the host SSH agent (when enabled).
+// Bare-metal workers need neither (host processes inherit ports and the agent).
+func (c *Coordinator) onWorkerUp(w *Worker) {
+	if w.BareMetal {
+		return
+	}
+	go c.autoMap(w)
+	if hostCfg.SSHPassthrough {
+		go func() {
+			if err := c.pm.ForwardAgent(w, hostAgentSocket()); err != nil {
+				ui.Info("sr", "agent relay %s: %v", w.ID, err)
+			}
+		}()
+	}
 }
 
 // autoMap forwards the project's declared [[ports]] (from→to) plus any

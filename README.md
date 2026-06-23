@@ -97,12 +97,17 @@ ssh_auth_sock   = ""      # override the agent socket (e.g. your 1Password socke
 OP_SERVICE_ACCOUNT_TOKEN = "ops_…"   # so the 1Password CLI `op` works headless
 ```
 
-### 1Password
+### 1Password / YubiKey / gpg-agent
 
-Your **1Password SSH agent** works through `ssh_passthrough`: on macOS, Docker
-Desktop bridges whatever the host `SSH_AUTH_SOCK` points at — so if 1Password's
-SSH agent is your agent, `git push`/`ssh` use it (Touch ID prompt and all). Point
-`ssh_auth_sock` at the 1Password socket explicitly if your setup needs it. For the
+Any host SSH agent works through `ssh_passthrough` — 1Password, a YubiKey via
+gpg-agent, ssh-agent, whatever your host `SSH_AUTH_SOCK` points at. The coordinator
+**relays that agent into the worker over the SSH tunnel** (it listens on a socket
+inside the worker and pipes each connection to your host agent), so `git push`/`ssh`
+use your real keys — Touch ID / YubiKey-tap prompt and all. Because it rides the
+tunnel rather than a bind-mounted socket, it works the same on **Colima, Docker
+Desktop, OrbStack, and native Linux** (a host socket can't be bind-mounted across
+the Colima/Docker-Desktop VM). Point `ssh_auth_sock` at a specific agent socket to
+override which one is relayed. For the
 **`op` CLI** itself, the desktop (biometric) integration can't reach into a
 container, so use a [1Password service account](https://developer.1password.com/docs/service-accounts/):
 `brew install 1password-cli`, then put `OP_SERVICE_ACCOUNT_TOKEN` in `[env]` and
@@ -123,12 +128,13 @@ disables it for loopback-only dev (refused together with `--tailnet`).
 ## SSH & git inside the sandbox
 
 With `ssh_passthrough` on, workers can use your **host SSH agent** — including a
-YubiKey — via the forwarded agent socket (engine-aware: the Docker Desktop /
-OrbStack bridge on macOS, `$SSH_AUTH_SOCK` on native Linux), plus your `~/.ssh`
-config and `known_hosts`. With `git_passthrough`, your `~/.gitconfig` is bound in,
-so `git push` and `ssh` just work in the sandbox. Both default **off** (they hand
-your agent/keys to an untrusted, danger-mode worker) — enable globally when you
-trust what runs there.
+YubiKey (gpg-agent) or 1Password — which the coordinator **relays into the worker
+over the SSH tunnel** and exposes at `SSH_AUTH_SOCK`. This crosses any engine's VM
+boundary (Colima, Docker Desktop, OrbStack, native Linux) where a bind-mounted
+socket can't. Your `~/.ssh` config and `known_hosts` are bind-mounted too; with
+`git_passthrough`, your `~/.gitconfig` is bound in, so `git push` and `ssh` just
+work in the sandbox. Both default **off** (they hand your agent/keys to an
+untrusted, danger-mode worker) — enable globally when you trust what runs there.
 
 ## Bare metal (no container)
 
@@ -182,8 +188,9 @@ data loss. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
   before every proxy hop — HTTP and websockets alike.
 - **Untrusted workers.** Each worker is a danger-mode sandbox: its own docker
   network (no sibling reachability), `--memory`/`--pids` caps, a loopback-only API
-  fenced by a per-worker token, and a hardened sshd (`AllowTcpForwarding local`,
-  no agent/gateway/tunnel forwarding).
+  fenced by a per-worker token, and a hardened sshd that only the coordinator key
+  can use: `-L` restricted to in-container loopback (`PermitOpen`), no TCP `-R`
+  (`PermitListen none`), and a single unix `-R` for the host SSH-agent relay.
 - **Secrets stay host-side** in `~/.config/shellraiser` (0700): the password hash, the coordinator SSH key, the worker registry. The shared agent-login volume is
   mounted **read-only** into workers; only `sr login` writes it.
 - The docker socket is never mounted by default (it's a host-takeover grant under

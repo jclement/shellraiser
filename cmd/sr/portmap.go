@@ -26,6 +26,7 @@ type PortMapper struct {
 	mu      sync.Mutex
 	clients map[string]*ssh.Client      // workerID → ssh client
 	fwds    map[string]map[int]*forward // workerID → containerPort → forward
+	agents  map[string]net.Listener     // workerID → in-worker agent relay listener
 }
 
 // tailnetListener is the slice of tsnet.Server we use: Listen on the tailnet IP.
@@ -39,7 +40,7 @@ type forward struct {
 }
 
 func newPortMapper(signer ssh.Signer, ts tailnetListener) *PortMapper {
-	pm := &PortMapper{signer: signer, clients: map[string]*ssh.Client{}, fwds: map[string]map[int]*forward{}}
+	pm := &PortMapper{signer: signer, clients: map[string]*ssh.Client{}, fwds: map[string]map[int]*forward{}, agents: map[string]net.Listener{}}
 	if ts != nil {
 		pm.ts = ts
 	}
@@ -195,10 +196,72 @@ func (m *PortMapper) CloseWorker(workerID string) {
 		}
 	}
 	delete(m.fwds, workerID)
+	if ln, ok := m.agents[workerID]; ok {
+		_ = ln.Close()
+		delete(m.agents, workerID)
+	}
 	if c, ok := m.clients[workerID]; ok {
 		_ = c.Close()
 		delete(m.clients, workerID)
 	}
+}
+
+// ForwardAgent relays the host SSH agent (e.g. gpg-agent/YubiKey, 1Password) into
+// the worker over the SSH tunnel: it opens a unix listener INSIDE the worker at
+// agentRelaySock and pipes each connection to the host agent socket. Unlike a
+// bind-mounted socket this crosses the docker VM boundary, so it works on Colima,
+// Docker Desktop, OrbStack, and native Linux alike. Idempotent per worker.
+func (m *PortMapper) ForwardAgent(w *Worker, hostSock string) error {
+	if hostSock == "" {
+		return nil
+	}
+	m.mu.Lock()
+	if _, ok := m.agents[w.ID]; ok {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+
+	cl, err := m.client(w)
+	if err != nil {
+		return err
+	}
+	ln, err := cl.ListenUnix(agentRelaySock)
+	if err != nil {
+		return fmt.Errorf("agent relay listen in %s: %w", w.ID, err)
+	}
+	m.mu.Lock()
+	if _, ok := m.agents[w.ID]; ok { // lost a race — keep the first
+		m.mu.Unlock()
+		_ = ln.Close()
+		return nil
+	}
+	m.agents[w.ID] = ln
+	m.mu.Unlock()
+
+	go func() {
+		for {
+			worker, err := ln.Accept()
+			if err != nil {
+				return // listener closed (worker gone)
+			}
+			go func() {
+				defer worker.Close()
+				host, err := net.Dial("unix", hostSock)
+				if err != nil {
+					ui.Info("ports", "agent relay dial host: %v", err)
+					return
+				}
+				defer host.Close()
+				done := make(chan struct{}, 2)
+				go func() { _, _ = io.Copy(host, worker); done <- struct{}{} }()
+				go func() { _, _ = io.Copy(worker, host); done <- struct{}{} }()
+				<-done
+			}()
+		}
+	}()
+	ui.Info("ports", "ssh agent relayed into %s", w.ID)
+	return nil
 }
 
 // List returns the worker's active mappings as containerPort → hostPort.
