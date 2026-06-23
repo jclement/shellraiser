@@ -26,6 +26,14 @@ type hostConfig struct {
 	SSHPassthrough bool `toml:"ssh_passthrough"`
 	// GitPassthrough binds the host ~/.gitconfig (read-only) into every worker.
 	GitPassthrough bool `toml:"git_passthrough"`
+	// SSHAuthSock overrides the host SSH agent socket to forward (else OS default:
+	// the Docker Desktop bridge on macOS, $SSH_AUTH_SOCK on Linux). Point it at
+	// your 1Password agent socket if needed.
+	SSHAuthSock string `toml:"ssh_auth_sock"`
+	// Env is injected into every worker (e.g. OP_SERVICE_ACCOUNT_TOKEN so the
+	// 1Password CLI `op` works headless, or other account-wide secrets/API keys).
+	// These reach the untrusted worker — treat like the shared agent creds.
+	Env map[string]string `toml:"env"`
 }
 
 // hostCfg is the loaded global config, set by the daemon at startup and read by

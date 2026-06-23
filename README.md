@@ -81,9 +81,25 @@ Host-wide knobs live in the **global config** `~/.config/shellraiser/config.toml
 
 ```toml
 password_hash   = "…"     # bcrypt; managed via the UI (don't hand-edit)
-ssh_passthrough = true    # forward the host SSH agent (YubiKey) + ~/.ssh into workers
+port            = 43764   # the localhost UI port (random on first run; --port overrides)
+ssh_passthrough = true    # forward the host SSH agent (YubiKey / 1Password) + ~/.ssh
 git_passthrough = true    # bind host ~/.gitconfig into workers
+ssh_auth_sock   = ""      # override the agent socket (e.g. your 1Password socket)
+
+[env]                     # injected into every worker (reaches the untrusted box)
+OP_SERVICE_ACCOUNT_TOKEN = "ops_…"   # so the 1Password CLI `op` works headless
 ```
+
+### 1Password
+
+Your **1Password SSH agent** works through `ssh_passthrough`: on macOS, Docker
+Desktop bridges whatever the host `SSH_AUTH_SOCK` points at — so if 1Password's
+SSH agent is your agent, `git push`/`ssh` use it (Touch ID prompt and all). Point
+`ssh_auth_sock` at the 1Password socket explicitly if your setup needs it. For the
+**`op` CLI** itself, the desktop (biometric) integration can't reach into a
+container, so use a [1Password service account](https://developer.1password.com/docs/service-accounts/):
+`brew install 1password-cli`, then put `OP_SERVICE_ACCOUNT_TOKEN` in `[env]` and
+`op read` / `op run -- <cmd>` work in the box. No wrapper needed.
 
 The default base is shellraiser's own image (Ubuntu + zsh/starship, mise, helix,
 node, the agents, postgres, tailscale); a custom `base`/`dockerfile` gets a lean

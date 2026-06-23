@@ -70,9 +70,13 @@ func sshGitMounts() []string {
 
 // agentSocket resolves the host SSH agent socket path to bind into the worker.
 func agentSocket() string {
+	if hostCfg.SSHAuthSock != "" {
+		return hostCfg.SSHAuthSock // explicit override (e.g. the 1Password agent)
+	}
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		// The docker engine runs in a VM; Docker Desktop/OrbStack bridge the host
-		// agent to this well-known in-VM path.
+		// agent (whatever the host SSH_AUTH_SOCK points at — incl. 1Password) to
+		// this well-known in-VM path.
 		return "/run/host-services/ssh-auth.sock"
 	}
 	return os.Getenv("SSH_AUTH_SOCK") // native Linux engine
@@ -248,6 +252,11 @@ func ensureWorker(id, project, image string) (*Worker, error) {
 	// inside the sandbox. Off by default — it exposes your agent/keys to the
 	// untrusted worker.
 	args = append(args, sshGitMounts()...)
+
+	// Global env injection (e.g. OP_SERVICE_ACCOUNT_TOKEN for the 1Password CLI).
+	for k, v := range hostCfg.Env {
+		args = append(args, "-e", k+"="+v)
+	}
 
 	args = append(args, image)
 	if _, err := dockerRun(args...); err != nil {
