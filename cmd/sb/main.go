@@ -37,6 +37,8 @@ func main() {
 		cmdNuke(args)
 	case "logs":
 		cmdLogs(args)
+	case "login":
+		cmdLogin(args)
 	case "doctor":
 		cmdDoctor(args)
 	case "help", "-h", "--help":
@@ -56,6 +58,7 @@ func usage() {
   sb stop  [id]   stop a worker (all if omitted)
   sb nuke   id    remove a worker container + its volume
   sb logs   id    stream a worker's container logs
+  sb login        log into claude/codex once (shared across projects)
   sb doctor       preflight checks (docker, image, perms)
   sb help         this message
 

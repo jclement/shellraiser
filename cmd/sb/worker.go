@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -30,6 +31,16 @@ type Worker struct {
 // coordAuthKey is the coordinator's authorized_keys line, set by the daemon at
 // startup and injected into each worker so the port-mapper can SSH in.
 var coordAuthKey string
+
+// agentsVolume holds the shared claude/codex credential files (written only by
+// `sb login`, read-only into every non-isolated worker).
+const agentsVolume = "sbox_agents"
+
+func ensureAgentsVolume() {
+	if exec.Command("docker", "volume", "inspect", agentsVolume).Run() != nil {
+		_, _ = dockerRun("volume", "create", agentsVolume)
+	}
+}
 
 func containerName(id string) string { return "sb_" + id }
 func networkName(id string) string   { return "sb_net_" + id }
@@ -176,6 +187,21 @@ func ensureWorker(id, project, image string) (*Worker, error) {
 	if cfg.PostgresEnabled() {
 		args = append(args, "-e", "SLOPBOX_POSTGRES=1")
 	}
+
+	// Agent logins. Hot, per-interaction state (~/.claude.json, sessions) is
+	// relocated per-worker into the home volume via CLAUDE_CONFIG_DIR/CODEX_HOME
+	// so concurrent workers never corrupt the monolithic .claude.json. Unless the
+	// project opts out, the shared creds volume is mounted READ-ONLY at /agents
+	// and the entrypoint seeds credential files from it (single-writer: sb login).
+	args = append(args,
+		"-e", "CLAUDE_CONFIG_DIR=/home/ubuntu/.config/claude",
+		"-e", "CODEX_HOME=/home/ubuntu/.config/codex",
+	)
+	if !cfg.IsolatedAgents {
+		ensureAgentsVolume()
+		args = append(args, "-v", agentsVolume+":/agents:ro")
+	}
+
 	args = append(args, image)
 	if _, err := dockerRun(args...); err != nil {
 		return nil, fmt.Errorf("start worker: %w", err)

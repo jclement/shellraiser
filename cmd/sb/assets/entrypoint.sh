@@ -213,6 +213,30 @@ if [ -n "${TAILSCALE_KEY:-}" ] || [ "${SLOPBOX_TAILSCALE:-0}" = "1" ]; then
   fi
 fi
 
+# 4b. Seed shared agent credentials. The coordinator mounts the shared creds
+#     volume read-only at /agents (unless the project is isolated) and points
+#     CLAUDE_CONFIG_DIR / CODEX_HOME at per-worker dirs in the home volume. Copy
+#     ONLY the credential files in (never the hot .claude.json / sessions), and
+#     never clobber a locally-refreshed token.
+seed_agents() {
+  [ -d /agents ] || return 0
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    run_user mkdir -p "$CLAUDE_CONFIG_DIR"
+    if [ -f /agents/claude/.credentials.json ] && [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
+      cp /agents/claude/.credentials.json "$CLAUDE_CONFIG_DIR/.credentials.json" 2>/dev/null || true
+    fi
+  fi
+  if [ -n "${CODEX_HOME:-}" ]; then
+    run_user mkdir -p "$CODEX_HOME"
+    if [ -f /agents/codex/auth.json ] && [ ! -f "$CODEX_HOME/auth.json" ]; then
+      cp /agents/codex/auth.json "$CODEX_HOME/auth.json" 2>/dev/null || true
+    fi
+  fi
+  chown -R "$USERNAME:$USERNAME" "${CLAUDE_CONFIG_DIR:-/dev/null}" "${CODEX_HOME:-/dev/null}" 2>/dev/null || true
+  echo "slopbox: seeded shared agent credentials"
+}
+seed_agents
+
 # 5. Run the app as the unprivileged user, with HOME + tool paths integrated so
 #    directly-launched agents/editors see mise- and brew-installed tools.
 export HOME="$HOME_DIR"

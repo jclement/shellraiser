@@ -147,6 +147,30 @@ func cmdLogs(args []string) {
 	}
 }
 
+// cmdLogin is the single-writer agent-login flow: one throwaway container with
+// the shared creds volume mounted read-WRITE, where you log into claude/codex
+// once. Every non-isolated worker then seeds those creds read-only.
+func cmdLogin(_ []string) {
+	if !dockerAlive() {
+		fatal("docker is not running")
+	}
+	ensureAgentsVolume()
+	if err := ensureBaseImage(); err != nil {
+		fatal("%v", err)
+	}
+	ui.Info("login", "one-time agent login — credentials are written to the shared %q volume", agentsVolume)
+	ui.Print(ui.Gray("  In the shell: run `claude` then /login, and/or `codex login`. Type `exit` when done."))
+	cmd := exec.Command("docker", "run", "--rm", "-it",
+		"-v", agentsVolume+":/agents",
+		"-e", "CLAUDE_CONFIG_DIR=/agents/claude",
+		"-e", "CODEX_HOME=/agents/codex",
+		baseImage(),
+		"bash", "-lc", "mkdir -p /agents/claude /agents/codex && cd /root && exec bash")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	_ = cmd.Run()
+	ui.Info("login", "done — new workers will pick up these credentials")
+}
+
 func cmdDoctor(_ []string) {
 	check := func(name string, ok bool, detail string) {
 		mark := "ok"
