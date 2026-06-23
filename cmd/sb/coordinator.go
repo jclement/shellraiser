@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +100,48 @@ func isDataRoute(rest string) bool {
 	return false
 }
 
+// --- control plane (unix socket) ------------------------------------------
+//
+// The CLI talks to the running daemon over a 0600 unix socket
+// (~/.config/sbox/sb.sock): filesystem-permission-gated, no extra TCP port,
+// immune to browser CSRF/DNS-rebinding. Endpoints: health, register, shutdown.
+
+func (c *Coordinator) controlMux() *http.ServeMux {
+	m := http.NewServeMux()
+	m.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]string{"port": c.port, "version": version})
+	})
+	m.HandleFunc("POST /register", func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Project string }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		id := boxID(req.Project)
+		worker, err := ensureWorker(id, req.Project)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		waitReady(worker) // don't hand back a URL until the worker actually serves
+		c.reg.put(worker)
+		resp := map[string]any{
+			"id": id, "port": c.port,
+			"authEnabled": c.auth.Enabled(),
+			"registered":  c.auth.HasCredentials(),
+		}
+		if c.auth.Enabled() && !c.auth.HasCredentials() {
+			resp["bootstrap"] = c.auth.BootstrapCode()
+		}
+		writeJSON(w, resp)
+	})
+	m.HandleFunc("POST /shutdown", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]bool{"ok": true})
+		go func() { time.Sleep(100 * time.Millisecond); os.Exit(0) }()
+	})
+	return m
+}
+
 // handleAPIWorkers lists registered projects for the rail.
 func (c *Coordinator) handleAPIWorkers(w http.ResponseWriter, r *http.Request) {
 	c.reg.reconcile()
@@ -157,8 +201,9 @@ func (c *Coordinator) serveShell(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, sub, path)
 }
 
-// Run serves until the process exits.
-func (c *Coordinator) Run() error {
+// Run serves the UI (TCP) and, if sockPath is set, the control plane (unix
+// socket) until the process exits.
+func (c *Coordinator) Run(sockPath string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/workers", c.handleAPIWorkers)
 	mux.HandleFunc("POST /api/workers/{id}/{action}", c.handleWorkerAction)
@@ -176,6 +221,17 @@ func (c *Coordinator) Run() error {
 			c.reg.reconcile()
 		}
 	}()
+
+	// Control plane on the unix socket (CLI ⇄ daemon).
+	if sockPath != "" {
+		_ = os.Remove(sockPath)
+		ln, err := net.Listen("unix", sockPath)
+		if err != nil {
+			return fmt.Errorf("control socket: %w", err)
+		}
+		_ = os.Chmod(sockPath, 0o600)
+		go func() { _ = http.Serve(ln, c.controlMux()) }()
+	}
 
 	addr := "127.0.0.1:" + c.port
 	if !c.auth.Enabled() {

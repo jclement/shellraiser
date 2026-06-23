@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jclement/slopbox/internal/auth"
 	"github.com/jclement/slopbox/internal/ui"
 )
 
@@ -28,6 +27,10 @@ func main() {
 	switch cmd {
 	case "", "up":
 		cmdUp(args)
+	case "__daemon":
+		cmdDaemon(args)
+	case "down":
+		cmdDown(args)
 	case "ls", "status":
 		cmdLs(args)
 	case "stop":
@@ -103,28 +106,58 @@ func cmdUp(args []string) {
 		fatal("image %s not found — build it first (`mise run dev` / image build lands in Phase 5)", workerImage)
 	}
 
-	// Coordinator-owned passkey auth (one login for every project).
-	am, err := auth.New(filepath.Join(dir, "auth", "store.json"), "", "", noAuth)
-	if err != nil {
-		fatal("auth: %v", err)
-	}
-	am.Logf = func(format string, a ...any) { ui.Info("auth", format, a...) }
-
-	id := boxID(project)
-	ui.Boot("sb", "project", id, "path", project)
-	w, err := ensureWorker(id, project)
+	// Ensure the (detached) coordinator is running, then register this project.
+	ui.Boot("sb", "project", boxID(project), "path", project)
+	m, err := ensureCoordinator(dir, port, noAuth)
 	if err != nil {
 		fatal("%v", err)
 	}
-	waitReady(w)
-
-	co := newCoordinator(port, am)
-	co.reg.put(w)
-	co.reg.reconcile() // adopt any other already-running workers
-	ui.Info("sb", "project %q → worker %s (api 127.0.0.1:%s)", id, w.Container, w.APIPort)
-	if err := co.Run(); err != nil {
+	id, err := registerWithDetails(m, project)
+	if err != nil {
 		fatal("%v", err)
 	}
+	url := fmt.Sprintf("http://127.0.0.1:%s/w/%s/", m.Port, id)
+	ui.Ready(url)
+	openBrowser(url)
+}
+
+// cmdDaemon is the hidden detached-coordinator entrypoint (sb __daemon).
+func cmdDaemon(args []string) {
+	port := "7700"
+	noAuth := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-auth":
+			noAuth = true
+		case "--port":
+			if i+1 < len(args) {
+				i++
+				port = args[i]
+			}
+		}
+	}
+	dir, err := globalDir()
+	if err != nil {
+		fatal("%v", err)
+	}
+	runDaemon(dir, port, noAuth)
+}
+
+// cmdDown stops every worker and shuts the coordinator down (end of day).
+func cmdDown(_ []string) {
+	dir, err := globalDir()
+	if err != nil {
+		fatal("%v", err)
+	}
+	for _, w := range reconciledRegistry().list() {
+		if w.State == "running" {
+			_, _ = dockerRun("stop", w.Container)
+		}
+	}
+	if m, ok := liveCoordinator(dir); ok {
+		_, _ = sockClient(m.Sock).Post("http://unix/shutdown", "application/json", nil)
+	}
+	ui.Info("sb", "all workers stopped; coordinator shut down")
 }
 
 func fatal(format string, a ...any) {
