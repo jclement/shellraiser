@@ -121,7 +121,7 @@ func cmdUp(args []string) {
 	if port == "" {
 		port = resolveUIPort(dir) // stable random high port, persisted
 	}
-	if !isBareMetal(project) && !dockerAlive() {
+	if !dockerAlive() {
 		fatal("docker is not running — start Docker Desktop and retry")
 	}
 	if !isGitRepo(project) {
@@ -130,13 +130,11 @@ func cmdUp(args []string) {
 
 	// Build the worker image from embedded assets up-front so progress streams to
 	// THIS terminal (the first-run base build takes a few minutes); register then
-	// only has to start the container. Bare-metal projects need no image.
+	// only has to start the container.
 	ui.Boot("sr", "project", boxID(project), "path", project)
-	var image string
-	if !isBareMetal(project) {
-		if image, err = resolveImage(project); err != nil {
-			fatal("%v", err)
-		}
+	image, err := resolveImage(project)
+	if err != nil {
+		fatal("%v", err)
 	}
 
 	// Foreground dev mode: run the coordinator in THIS process (live logs,

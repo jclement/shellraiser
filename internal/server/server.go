@@ -112,16 +112,7 @@ func New(repoDir string, cfg config.Config) (*Server, error) {
 	}, nil
 }
 
-// Handler returns the routed worker mux WITHOUT the token/auth gate, plus starts
-// the event logger. The coordinator uses this to mount a "bare metal" worker
-// in-process (no container) — auth is enforced by the coordinator before it
-// dispatches here.
-func (s *Server) Handler() http.Handler {
-	go s.logEvents()
-	return s.buildMux()
-}
-
-// buildMux wires every worker route (shared by Run and Handler).
+// buildMux wires every worker route.
 func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -201,21 +192,6 @@ func (s *Server) Run() error {
 	s.printAccess()
 
 	return http.ListenAndServe(s.cfg.Addr, s.gate(mux))
-}
-
-// Shutdown kills every session (used when a bare-metal worker is removed).
-func (s *Server) Shutdown() { s.mgr.KillAll() }
-
-// SessionStats returns this worker's total and running session counts (used by
-// the coordinator's aggregate stats for a bare-metal worker).
-func (s *Server) SessionStats() (total, running int) {
-	for _, i := range s.mgr.List() {
-		total++
-		if i.State == session.StateRunning {
-			running++
-		}
-	}
-	return
 }
 
 // gate enforces auth on data/proxy routes while leaving the static UI and the

@@ -46,7 +46,6 @@ type Config struct {
 	Base           string `toml:"base"`
 	Dockerfile     string `toml:"dockerfile"`
 	IsolatedAgents bool   `toml:"isolated_agents"` // own agent-login volume (no sharing)
-	BareMetal      bool   `toml:"bare_metal"`      // run on the host (no container/isolation)
 
 	// Named container→host port mappings, forwarded on start. Each is
 	// [[ports]] with name/from/to (to defaults to from). A runtime change to a
@@ -132,9 +131,6 @@ func mergeFile(c *Config, path string) error {
 	}
 	if md.IsDefined("isolated_agents") {
 		c.IsolatedAgents = f.IsolatedAgents
-	}
-	if md.IsDefined("bare_metal") {
-		c.BareMetal = f.BareMetal
 	}
 	if md.IsDefined("ports") {
 		c.Ports = f.Ports

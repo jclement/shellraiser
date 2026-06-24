@@ -101,9 +101,6 @@ func (r *Registry) reconcileNow() {
 		r.adopt(f[0], f[1], f[2], f[3])
 	}
 	for _, w := range r.list() {
-		if w.BareMetal {
-			continue // in-process, not docker-managed
-		}
 		if !live[w.ID] {
 			r.remove(w.ID)
 		}

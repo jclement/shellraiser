@@ -117,12 +117,6 @@ func (c *Coordinator) handleWorker(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such project: "+id, http.StatusNotFound)
 		return
 	}
-	// Bare-metal: serve the in-process worker directly (no container, no proxy).
-	if worker.handler != nil {
-		c.act.touch(id)
-		http.StripPrefix("/w/"+id, worker.handler).ServeHTTP(w, r)
-		return
-	}
 	// Lazy-resume: a request to an idle-stopped worker transparently wakes it.
 	if worker.State != "running" || worker.APIPort == "" {
 		if !c.resume(worker) {
@@ -167,10 +161,8 @@ func (c *Coordinator) controlMux() *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if !worker.BareMetal {
-			waitReady(worker) // don't hand back a URL until the container serves
-			c.onWorkerUp(worker)
-		}
+		waitReady(worker) // don't hand back a URL until the container serves
+		c.onWorkerUp(worker)
 		c.reg.put(worker)
 		c.act.touch(id)
 		resp := map[string]any{
@@ -225,12 +217,6 @@ func (c *Coordinator) handleStats(w http.ResponseWriter, r *http.Request) {
 
 // workerSessions returns a worker's (total, running) session counts.
 func workerSessions(w *Worker) (total, running int) {
-	if w.BareMetal {
-		if w.srv != nil {
-			return w.srv.SessionStats()
-		}
-		return 0, 0
-	}
 	if w.APIPort == "" {
 		return 0, 0
 	}
@@ -266,17 +252,6 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 	}
 	// Bare-metal: no container — stop/nuke just kill the in-process sessions and
 	// drop it from the registry (re-register with `sr`).
-	if worker.BareMetal {
-		if action == "stop" || action == "nuke" {
-			runTeardown(worker)
-			if worker.srv != nil {
-				worker.srv.Shutdown()
-			}
-			c.reg.remove(id)
-		}
-		writeJSON(w, map[string]bool{"ok": true})
-		return
-	}
 	var err error
 	switch action {
 	case "stop":
@@ -348,11 +323,6 @@ func (c *Coordinator) handlePortMap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such project", http.StatusNotFound)
 		return
 	}
-	if worker.BareMetal {
-		// On bare metal the dev server already binds host localhost — nothing to tunnel.
-		writeJSON(w, map[string]any{"container": port, "host": port, "addr": "127.0.0.1:" + strconv.Itoa(port)})
-		return
-	}
 	switch action {
 	case "map":
 		var req struct {
@@ -386,13 +356,10 @@ func (c *Coordinator) handlePortList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// onWorkerUp wires a freshly-running container worker into the routing layer:
-// forwards its declared ports and relays the host SSH agent (when enabled).
-// Bare-metal workers need neither (host processes inherit ports and the agent).
+// onWorkerUp wires a freshly-running worker into the routing layer: forwards its
+// declared ports, relays the host SSH agent (when enabled), and stands up the
+// command relay.
 func (c *Coordinator) onWorkerUp(w *Worker) {
-	if w.BareMetal {
-		return
-	}
 	go c.autoMap(w)
 	if hostCfg.SSHPassthrough {
 		go func() {

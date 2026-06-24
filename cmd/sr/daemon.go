@@ -136,10 +136,8 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 		if werr != nil {
 			fatal("%v", werr)
 		}
-		if !w.BareMetal {
-			waitReady(w)
-			co.onWorkerUp(w)
-		}
+		waitReady(w)
+		co.onWorkerUp(w)
 		co.reg.put(w)
 		co.act.touch(id)
 		url := fmt.Sprintf("http://127.0.0.1:%s/w/%s/", port, id)
@@ -162,14 +160,8 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 				os.Exit(1)
 			}()
 			runTeardown(w)
-			if w.BareMetal {
-				if w.srv != nil {
-					w.srv.Shutdown()
-				}
-			} else {
-				co.pm.CloseWorker(id)
-				_, _ = dockerRun("stop", w.Container)
-			}
+			co.pm.CloseWorker(id)
+			_, _ = dockerRun("stop", w.Container)
 			os.Exit(0)
 		}()
 	}

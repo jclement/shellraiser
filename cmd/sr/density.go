@@ -82,8 +82,8 @@ func (c *Coordinator) reapIdle() {
 		return
 	}
 	for _, w := range c.reg.list() {
-		if w.BareMetal || w.State != "running" {
-			continue // bare-metal is in-process (nothing to stop/reclaim)
+		if w.State != "running" {
+			continue
 		}
 		if time.Since(c.act.last(w.ID)) < grace {
 			continue

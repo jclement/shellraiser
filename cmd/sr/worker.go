@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,12 +14,11 @@ import (
 	"time"
 
 	"github.com/jclement/shellraiser/internal/config"
-	"github.com/jclement/shellraiser/internal/server"
 	"github.com/jclement/shellraiser/internal/ui"
 )
 
-// Worker is one project's backend, fronted by the coordinator. Normally a
-// container; with BareMetal it's an in-process server running on the host.
+// Worker is one project's backend, fronted by the coordinator: a hardened
+// container (the container is the blast radius).
 type Worker struct {
 	ID        string // sr container/volume identity
 	Project   string // absolute path of the project (git repo) on the host
@@ -32,42 +30,11 @@ type Worker struct {
 	SSHPort   string // loopback host port → container :22 (Phase 3)
 	Token     string // SHELLRAISER_WORKER_TOKEN injected at run; required on every proxied hop
 	State     string // docker State.Status: running | exited | …
-
-	// Bare-metal (no container): the worker runs in the coordinator process,
-	// serving handler directly against the project on disk.
-	BareMetal bool
-	handler   http.Handler
-	srv       *server.Server
 }
 
-// provisionWorker creates a worker for project — bare-metal (in-process) when the
-// project opts in, else a hardened container.
+// provisionWorker creates (or re-adopts) a project's hardened container worker.
 func provisionWorker(id, project, image string) (*Worker, error) {
-	cfg, _ := config.Load(project)
-	if cfg.BareMetal {
-		return newBareWorker(id, project, cfg)
-	}
 	return ensureWorker(id, project, image)
-}
-
-// newBareWorker runs the worker in-process on the host — no container, no
-// isolation. Sessions are host processes in the real project dir; dev servers
-// bind host localhost (so /p/ and a plain localhost:<port> both work, no SSH
-// tunnel needed).
-func newBareWorker(id, project string, cfg config.Config) (*Worker, error) {
-	srv, err := server.New(project, cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &Worker{
-		ID:        id,
-		Project:   project,
-		Name:      filepath.Base(project),
-		State:     "running",
-		BareMetal: true,
-		srv:       srv,
-		handler:   srv.Handler(),
-	}, nil
 }
 
 // coordAuthKey is the coordinator's authorized_keys line, set by the daemon at
@@ -84,39 +51,21 @@ func ensureAgentsVolume() {
 	}
 }
 
-// runTeardown executes the project's `teardown` command before the workspace is
-// stopped/nuked (container: as ubuntu in /work, with a timeout; bare-metal: on
-// the host in the project dir). Best-effort.
+// runTeardown executes the project's `teardown` command (as ubuntu in /work, with
+// a timeout) before the workspace is stopped/nuked. Best-effort.
 func runTeardown(w *Worker) {
 	cfg, _ := config.Load(w.Project)
 	if len(cfg.Teardown) == 0 {
 		return
 	}
 	ui.Info("sr", "teardown %s: %s", w.ID, strings.Join(cfg.Teardown, " "))
-	if w.BareMetal {
-		cmd := exec.Command(cfg.Teardown[0], cfg.Teardown[1:]...)
-		cmd.Dir = w.Project
-		_ = cmd.Run()
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	args := append([]string{"exec", "-u", "ubuntu", "-w", "/work", w.Container}, cfg.Teardown...)
 	_ = exec.CommandContext(ctx, "docker", args...).Run()
 }
 
-func workerKind(w *Worker) string {
-	if w.BareMetal {
-		return "bare metal"
-	}
-	return "container " + w.Container
-}
-
-// isBareMetal reports whether a project opts out of containers.
-func isBareMetal(project string) bool {
-	cfg, _ := config.Load(project)
-	return cfg.BareMetal
-}
+func workerKind(w *Worker) string { return "container " + w.Container }
 
 // sshGitMounts returns the docker -v/-e args for SSH/git passthrough, honoring
 // the global config toggles. The SSH agent socket is engine-aware: on a Docker

@@ -73,9 +73,7 @@ func cmdLs(_ []string) {
 			dot = ui.Gray("○")
 		}
 		ports := ""
-		if w.BareMetal {
-			ports = ui.Gray("  bare metal (in-process)")
-		} else if w.APIPort != "" {
+		if w.APIPort != "" {
 			ports = ui.Gray("  api :" + w.APIPort)
 			if w.SSHPort != "" {
 				ports += ui.Gray("  ssh :" + w.SSHPort)

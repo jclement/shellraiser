@@ -69,7 +69,6 @@ base      = "node:20"         # bring your own base image (Debian/Ubuntu family)
 postgres  = true              # opt in to postgres + the /db UI (default: off)
 code      = true              # code-server at /edit (default: on, lazy-installed)
 isolated_agents = true        # don't share the global claude/codex login
-bare_metal = true             # run on the host (no container) — see below
 run      = ["npm", "run", "dev"]          # green Run button in the header
 teardown = ["docker", "compose", "down"]  # runs when the workspace stops
 
@@ -135,22 +134,6 @@ socket can't. Your `~/.ssh` config and `known_hosts` are bind-mounted too; with
 `git_passthrough`, your `~/.gitconfig` is bound in, so `git push` and `ssh` just
 work in the sandbox. Both default **off** (they hand your agent/keys to an
 untrusted, danger-mode worker) — enable globally when you trust what runs there.
-
-## Bare metal (no container)
-
-Sometimes you don't want the Docker sandbox — you just want the same UI/worktree/
-session workflow against a project **directly on your machine**. Set
-`bare_metal = true` in that project's `.shellraiser.toml` and the worker runs
-**in the coordinator process** instead of a container: no image build, no Docker
-needed (for that project), sessions are host processes in the real project dir,
-and dev servers bind host localhost (so `localhost:<port>` and `/p/<port>/` work
-with no tunnel). It shows up in the same UI alongside your containerized projects.
-
-Trade-offs (by design): **no isolation** — a danger-mode agent here has your full
-host access; no per-project postgres/code-server auto-start (use your own host
-tools); and the worker is tied to the coordinator's lifetime (your files persist,
-but re-run `sr` after a coordinator restart). Use it for trusted projects where
-you want bare-metal speed and access; use containers for everything else.
 
 ## Port mapping
 
