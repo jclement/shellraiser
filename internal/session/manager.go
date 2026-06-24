@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ type Commands struct {
 type Manager struct {
 	cmds Commands
 	env  []string
+	jnl  *journal
 
 	mu       sync.Mutex
 	sessions map[string]*Session
@@ -56,13 +58,18 @@ func NewManager(cmds Commands) *Manager {
 	if len(cmds.Codex) == 0 {
 		cmds.Codex = []string{"codex", "--dangerously-bypass-approvals-and-sandbox"}
 	}
+	home, _ := os.UserHomeDir()
 	return &Manager{
 		cmds:     cmds,
 		env:      os.Environ(),
+		jnl:      newJournal(filepath.Join(home, ".local", "share", "shellraiser")),
 		sessions: map[string]*Session{},
 		subs:     map[chan Event]struct{}{},
 	}
 }
+
+// Journal returns up to n recent journal entries, optionally scoped to a worktree.
+func (m *Manager) Journal(n int, cwd string) []JournalEntry { return m.jnl.tail(n, cwd) }
 
 func (m *Manager) argvFor(o CreateOpts) []string {
 	if len(o.Args) > 0 {
@@ -145,6 +152,8 @@ func (m *Manager) Create(o CreateOpts) (*Session, error) {
 	m.sessions[s.ID] = s
 	m.order = append(m.order, s.ID)
 	m.mu.Unlock()
+
+	m.jnl.write(JournalEntry{TS: now, Event: "start", ID: s.ID, Kind: o.Kind, Title: title, Cwd: o.Cwd, Argv: argv})
 
 	go s.readLoop()
 	go s.monitor()

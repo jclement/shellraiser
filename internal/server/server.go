@@ -127,6 +127,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)
 	mux.HandleFunc("GET /api/diff", s.handleDiff)
 	mux.HandleFunc("POST /api/commit", s.handleCommit)
+	mux.HandleFunc("GET /api/journal", s.handleJournal)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
@@ -489,6 +490,18 @@ func underDir(path, dir string) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// handleJournal returns the recent command journal — what actually ran in this
+// worker (per-worktree when ?cwd= is given), surviving restarts for audit/recovery.
+func (s *Server) handleJournal(w http.ResponseWriter, r *http.Request) {
+	n := 200
+	if v := r.URL.Query().Get("n"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 2000 {
+			n = parsed
+		}
+	}
+	writeJSON(w, s.mgr.Journal(n, r.URL.Query().Get("cwd")))
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {

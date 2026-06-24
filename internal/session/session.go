@@ -246,6 +246,7 @@ func (s *Session) handleExit() {
 	ev := s.eventLocked(false)
 	s.mu.Unlock()
 	_ = s.ptmx.Close()
+	s.mgr.jnl.write(JournalEntry{TS: time.Now(), Event: "exit", ID: s.ID, Cwd: s.Cwd, Exit: &code})
 	s.mgr.emit(*ev)
 }
 
