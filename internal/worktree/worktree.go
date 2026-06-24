@@ -246,6 +246,53 @@ func Repair(repoDir, worktreesDir string) {
 	_, _ = git(repoDir, append([]string{"worktree", "repair"}, paths...)...)
 }
 
+// Diff returns the unified diff for a worktree. With staged=false it's the full
+// working-tree-vs-HEAD diff (what the agent changed but hasn't committed),
+// including untracked files (via --intent-to-add semantics emulated by listing
+// them). Renames are detected; binary files are summarized by git.
+func Diff(dir string) (string, error) {
+	// Stage intent for untracked files so they appear in the diff, then diff the
+	// index+worktree against HEAD without actually committing anything.
+	_, _ = git(dir, "add", "-N", ".")
+	out, err := git(dir, "diff", "HEAD")
+	if err != nil {
+		// New repo with no commits yet: diff against the empty tree.
+		if out2, err2 := git(dir, "diff"); err2 == nil {
+			return string(out2), nil
+		}
+		return "", err
+	}
+	return string(out), nil
+}
+
+// Commit stages everything in the worktree and commits with message. Returns the
+// new commit's short hash. Ensures a fallback identity so commits never fail for
+// lack of user.email in a fresh container.
+func Commit(dir, message string) (string, error) {
+	ensureIdentity(dir)
+	if _, err := git(dir, "add", "-A"); err != nil {
+		return "", err
+	}
+	if _, err := git(dir, "commit", "-m", message); err != nil {
+		return "", err
+	}
+	hash, err := git(dir, "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(hash)), nil
+}
+
+// ensureIdentity sets a local fallback git identity if none is configured, so a
+// commit in a fresh worker (no mounted ~/.gitconfig) still succeeds.
+func ensureIdentity(dir string) {
+	if _, err := git(dir, "config", "user.email"); err == nil {
+		return // already set (globally or locally, e.g. mounted ~/.gitconfig)
+	}
+	_, _ = git(dir, "config", "user.email", "agent@shellraiser.local")
+	_, _ = git(dir, "config", "user.name", "shellraiser agent")
+}
+
 func git(dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

@@ -89,6 +89,12 @@
     .xterm { padding: 8px 10px; }
     .term-host { position: absolute; inset: 0; }
     .term-host.hidden { visibility: hidden; pointer-events: none; }
+    /* diff/review */
+    .diff-add { background: rgba(46,160,67,.14); color: #7ee787; }
+    .diff-del { background: rgba(248,81,73,.14); color: #ffa198; }
+    .diff-add-txt { color: var(--green); }
+    .diff-del-txt { color: var(--red); }
+    .diff-file { position: sticky; top: 0; }
     .term-reconnecting { position: absolute; top: 8px; right: 12px; z-index: 5; font-size: 11px; color: var(--accent-fg); background: var(--accent); padding: 2px 8px; border-radius: 9999px; opacity: .9; }
     .term-reconnecting.hidden { display: none; }
     @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
@@ -197,6 +203,12 @@
           <span data-icon="terminal" class="icon-lg"></span>
           <div class="text-sm">No sessions open.</div>
           <div class="text-xs">Pick a worktree, then launch claude · codex · shell · editor.</div>
+        </div>
+        <!-- Review/diff overlay (covers the terminals when open) -->
+        <div id="review-panel" class="absolute inset-0 z-20 hidden flex-col bg-app">
+          <div id="review-head" class="flex shrink-0 items-center gap-2 border-b border-app px-3 py-2 text-sm"></div>
+          <div id="review-body" class="min-h-0 flex-1 overflow-auto font-mono text-xs leading-relaxed"></div>
+          <div id="review-foot" class="flex shrink-0 items-center gap-2 border-t border-app px-3 py-2"></div>
         </div>
       </div>
       <div id="keybar"></div>

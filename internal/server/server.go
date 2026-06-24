@@ -125,6 +125,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/worktrees/rename", s.handleRenameWorktree)
 	mux.HandleFunc("POST /api/worktrees/reorder", s.handleReorderWorktrees)
 	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)
+	mux.HandleFunc("GET /api/diff", s.handleDiff)
+	mux.HandleFunc("POST /api/commit", s.handleCommit)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleKillSession)
@@ -339,6 +341,55 @@ func (s *Server) handleListWorktrees(w http.ResponseWriter, r *http.Request) {
 		return oi < oj
 	})
 	writeJSON(w, trees)
+}
+
+// okWorktree gates diff/commit to the project's own trees: the main repo dir or a
+// worktree under the worktrees dir — never an arbitrary path.
+func (s *Server) okWorktree(p string) bool {
+	p = filepath.Clean(p)
+	return p == filepath.Clean(s.repoDir) || underDir(p, s.worktreesDir)
+}
+
+// handleDiff returns the working-tree-vs-HEAD unified diff for a worktree.
+func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if !s.okWorktree(path) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("unknown worktree"))
+		return
+	}
+	diff, err := worktree.Diff(path)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(diff))
+}
+
+// handleCommit stages everything in a worktree and commits it (commit-per-step).
+func (s *Server) handleCommit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path    string `json:"path"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if !s.okWorktree(req.Path) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("unknown worktree"))
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("a commit message is required"))
+		return
+	}
+	hash, err := worktree.Commit(req.Path, req.Message)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, map[string]string{"hash": hash})
 }
 
 func (s *Server) handleReorderWorktrees(w http.ResponseWriter, r *http.Request) {

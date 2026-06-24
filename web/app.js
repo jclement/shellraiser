@@ -67,6 +67,7 @@ state.projects = [];
 state.portMaps = {}; // containerPort → host loopback port (active SSH -L tunnels)
 state.unseen = {};   // worktree path → true when a session finished but wasn't viewed
 state.projAtt = {};  // worker id → { sessionId: true } for threads awaiting input (cross-project)
+state.reviewPath = null; // worktree path whose diff is open in the review panel
 state.wtFilter = ''; // quick-filter text for the worktree list
 state.dragPath = null;
 
@@ -397,9 +398,13 @@ function worktreeStatus(path) {
   const kids = state.sessions.filter((s) => s.cwd === path);
   if (kids.some((s) => s.state === 'running')) return 'working';
   if (kids.some((s) => s.needsInput)) return 'needs-input';
+  const wt = state.worktrees.find((x) => x.path === path);
+  if (wt && wt.dirty && kids.some((s) => s.kind === 'claude' || s.kind === 'codex')) return 'ready-for-review';
   if (state.unseen[path]) return 'attention';
   return 'idle';
 }
+
+const reviewColor = '#58a6ff';
 
 // needsInputColor is the "act now" amber used by the worktree dot and the
 // project-rail badge alike, so the signal reads the same everywhere.
@@ -408,11 +413,13 @@ const needsInputColor = '#f59e0b';
 function statusDot(status) {
   const color = status === 'working' ? cssVar('--green')
     : status === 'needs-input' ? needsInputColor
+    : status === 'ready-for-review' ? reviewColor
     : status === 'attention' ? cssVar('--yellow')
     : cssVar('--faint');
   const wrap = el('span', 'relative ml-auto inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center');
   wrap.title = status === 'working' ? 'working'
     : status === 'needs-input' ? 'agent awaiting your input'
+    : status === 'ready-for-review' ? 'changes ready to review'
     : status === 'attention' ? 'finished — not looked at'
     : 'idle';
   if (status === 'working' || status === 'needs-input' || status === 'attention') {
@@ -504,6 +511,14 @@ function renderContext() {
   box.appendChild(el('span', 'shrink-0 text-faint', '·'));
   box.appendChild(el('span', 'truncate text-muted', w.detached ? 'detached' : (w.branch || '')));
   const acts = el('span', 'ml-auto flex shrink-0 items-center gap-0.5 pl-2');
+  if (w.dirty || w.added || w.deleted) {
+    const rev = el('button', 'iconbtn flex items-center gap-1 px-2 text-xs'); rev.title = 'Review changes (diff + commit)';
+    rev.appendChild(el('span', 'font-medium text-app', 'Review'));
+    if (w.added) rev.appendChild(el('span', 'diff-add-txt', '+' + w.added));
+    if (w.deleted) rev.appendChild(el('span', 'diff-del-txt', '−' + w.deleted));
+    rev.onclick = () => openReview(w);
+    acts.appendChild(rev);
+  }
   if (state.info && state.info.run) {
     const run = el('button', 'iconbtn px-1'); run.title = 'Run (from .shellraiser.toml)'; run.style.color = 'var(--green)';
     run.innerHTML = svg('play', 'icon icon-sm');
@@ -525,6 +540,86 @@ function renderContext() {
     del.onclick = () => deleteWorktree(w); acts.appendChild(del);
   }
   box.appendChild(acts);
+}
+
+// ---- review / diff panel -------------------------------------------------
+
+// openReview overlays the terminal area with the worktree's uncommitted diff and
+// a commit box. The diff is rendered from git's unified output — no extra libs.
+async function openReview(w) {
+  state.reviewPath = w.path;
+  const panel = $('#review-panel');
+  panel.classList.remove('hidden'); panel.classList.add('flex');
+  renderReviewHead(w);
+  renderReviewFoot(w);
+  $('#review-body').innerHTML = '<div class="p-4 text-faint">Loading diff…</div>';
+  try {
+    const text = await fetch(BASE + '/api/diff?path=' + encodeURIComponent(w.path)).then((r) => r.text());
+    $('#review-body').innerHTML = renderDiffHTML(text);
+  } catch (e) {
+    $('#review-body').innerHTML = `<div class="p-4" style="color:var(--red)">${esc(e.message || 'failed to load diff')}</div>`;
+  }
+}
+
+function closeReview() {
+  const panel = $('#review-panel');
+  panel.classList.add('hidden'); panel.classList.remove('flex');
+  state.reviewPath = null;
+}
+
+function renderReviewHead(w) {
+  const h = $('#review-head'); h.innerHTML = '';
+  const ic = el('span', ''); ic.style.color = w.color || cssVar('--accent'); ic.innerHTML = svg('branch', 'icon icon-sm'); h.appendChild(ic);
+  h.appendChild(el('span', 'font-semibold text-app', w.displayName || w.name));
+  h.appendChild(el('span', 'text-faint', '·'));
+  h.appendChild(el('span', 'truncate text-muted', w.detached ? 'detached' : (w.branch || '')));
+  const x = el('button', 'iconbtn ml-auto px-1'); x.title = 'Close (Esc)'; x.innerHTML = svg('x', 'icon icon-sm');
+  x.onclick = closeReview; h.appendChild(x);
+}
+
+function renderReviewFoot(w) {
+  const f = $('#review-foot'); f.innerHTML = '';
+  const inp = el('input', 'input flex-1 px-2 py-1 text-sm'); inp.placeholder = 'Commit message…'; noAutofill(inp);
+  const btn = el('button', 'btn btn-primary px-3 py-1 text-sm', 'Commit all');
+  const doCommit = async () => {
+    const msg = inp.value.trim();
+    if (!msg) { inp.focus(); return; }
+    btn.disabled = true;
+    try {
+      const r = await api('POST', '/api/commit', { path: w.path, message: msg });
+      toast('Committed ' + r.hash, 'ok');
+      inp.value = '';
+      await loadWorktrees();
+      const fresh = state.worktrees.find((x) => x.path === w.path);
+      if (fresh && (fresh.dirty || fresh.added || fresh.deleted)) openReview(fresh); else closeReview();
+    } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+  };
+  inp.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') doCommit(); });
+  btn.onclick = doCommit;
+  f.appendChild(inp); f.appendChild(btn);
+}
+
+// renderDiffHTML turns git's unified diff into a colored, file-grouped view.
+function renderDiffHTML(text) {
+  if (!text.trim()) return '<div class="p-4 text-faint">No uncommitted changes — everything is committed.</div>';
+  const out = [];
+  for (const raw of text.split('\n')) {
+    if (raw.startsWith('diff --git')) {
+      const name = raw.replace(/^diff --git a\//, '').replace(/ b\/.*/, '');
+      out.push(`<div class="diff-file border-t border-app bg-panel px-3 py-1 font-semibold text-app">${esc(name)}</div>`);
+      continue;
+    }
+    if (/^(index |--- |\+\+\+ |new file|deleted file|rename |similarity |old mode|new mode)/.test(raw)) {
+      out.push(`<div class="whitespace-pre px-3 text-faint">${esc(raw) || '&nbsp;'}</div>`);
+      continue;
+    }
+    let cls = 'text-muted';
+    if (raw.startsWith('@@')) cls = 'text-accent';
+    else if (raw.startsWith('+')) cls = 'diff-add';
+    else if (raw.startsWith('-')) cls = 'diff-del';
+    out.push(`<div class="whitespace-pre px-3 ${cls}">${esc(raw) || '&nbsp;'}</div>`);
+  }
+  return out.join('');
 }
 
 function renderTabs() {
@@ -672,6 +767,7 @@ function syncTabs() { for (const s of selectedSessions()) ensureTerm(s); }
 function selectWorktree(path) {
   state.selected = path;
   delete state.unseen[path]; // looked at → clear the attention indicator
+  if (state.reviewPath && state.reviewPath !== path) closeReview(); // don't show a stale diff
   renderWorktrees(); renderContext(); renderPorts();
   syncTabs();
   const ids = tabsForSelected();
@@ -1338,6 +1434,7 @@ function wirePalette() {
   // Global ⌘K / Ctrl-K — capture phase so it fires even when a terminal is focused.
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); e.stopPropagation(); openPalette(); }
+    if (e.key === 'Escape' && state.reviewPath) { e.preventDefault(); closeReview(); }
   }, true);
 }
 
