@@ -1,5 +1,6 @@
-# build artifacts (the root binary only — NOT the cmd/worker source dir)
+# build artifacts (the root binaries only — NOT the cmd/worker source dir)
 /shellraiser
+/sr
 *.test
 *.out
 
