@@ -66,6 +66,7 @@ state.projectId = PROJECT_ID;
 state.projects = [];
 state.portMaps = {}; // containerPort → host loopback port (active SSH -L tunnels)
 state.unseen = {};   // worktree path → true when a session finished but wasn't viewed
+state.projAtt = {};  // worker id → { sessionId: true } for threads awaiting input (cross-project)
 state.wtFilter = ''; // quick-filter text for the worktree list
 state.dragPath = null;
 
@@ -215,6 +216,14 @@ function renderProjects() {
     const ic = el('span', active ? 'text-accent' : 'text-faint'); ic.innerHTML = svg('box', 'icon icon-sm'); row.appendChild(ic);
     const name = el('span', 'truncate ' + (active ? 'text-app font-medium' : 'text-muted'), p.name); name.title = p.project; row.appendChild(name);
     const st = el('span', 'ml-auto flex shrink-0 items-center gap-1');
+    const att = projNeedsInput(p.id);
+    if (att > 0) {
+      const badge = el('span', 'inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-black animate-pulse', att > 1 ? String(att) : '');
+      badge.style.background = needsInputColor;
+      badge.title = `${att} thread${att > 1 ? 's' : ''} awaiting input`;
+      if (att === 1) { badge.classList.remove('min-w-4', 'px-1'); badge.classList.add('h-2', 'w-2'); }
+      st.appendChild(badge);
+    }
     if (p.state !== 'running') st.appendChild(el('span', 'text-[10px] text-faint', p.state));
     // container controls
     const kebab = el('button', 'iconbtn px-1 opacity-0 transition group-hover:opacity-100'); kebab.title = 'Manage'; kebab.innerHTML = svg('trash', 'icon icon-sm');
@@ -380,26 +389,38 @@ function gitMeta(w) {
 }
 
 // Aggregate per-worktree status (the rows show this, not the tab list):
-//   working   — a session in it is running
-//   attention — a session finished while you weren't looking at it
-//   idle      — nothing running, nothing unseen
+//   working     — a session in it is running
+//   needs-input — an agent went quiet but is alive: it's waiting on you
+//   attention   — a session finished while you weren't looking at it
+//   idle        — nothing running, nothing unseen
 function worktreeStatus(path) {
   const kids = state.sessions.filter((s) => s.cwd === path);
   if (kids.some((s) => s.state === 'running')) return 'working';
+  if (kids.some((s) => s.needsInput)) return 'needs-input';
   if (state.unseen[path]) return 'attention';
   return 'idle';
 }
 
+// needsInputColor is the "act now" amber used by the worktree dot and the
+// project-rail badge alike, so the signal reads the same everywhere.
+const needsInputColor = '#f59e0b';
+
 function statusDot(status) {
-  const v = status === 'working' ? '--green' : status === 'attention' ? '--yellow' : '--faint';
+  const color = status === 'working' ? cssVar('--green')
+    : status === 'needs-input' ? needsInputColor
+    : status === 'attention' ? cssVar('--yellow')
+    : cssVar('--faint');
   const wrap = el('span', 'relative ml-auto inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center');
-  wrap.title = status === 'working' ? 'working' : status === 'attention' ? 'finished — not looked at' : 'idle';
-  if (status === 'working' || status === 'attention') {
+  wrap.title = status === 'working' ? 'working'
+    : status === 'needs-input' ? 'agent awaiting your input'
+    : status === 'attention' ? 'finished — not looked at'
+    : 'idle';
+  if (status === 'working' || status === 'needs-input' || status === 'attention') {
     const ping = el('span', 'absolute inline-flex h-full w-full animate-ping rounded-full opacity-60');
-    ping.style.background = cssVar(v); wrap.appendChild(ping);
+    ping.style.background = color; wrap.appendChild(ping);
   }
   const core = el('span', 'relative inline-flex h-2 w-2 rounded-full');
-  core.style.background = cssVar(v); wrap.appendChild(core);
+  core.style.background = color; wrap.appendChild(core);
   return wrap;
 }
 
@@ -877,7 +898,7 @@ function connectEvents() {
     let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
     if (m.type === 'bridge') { handleBridge(m); return; }
     const s = state.sessions.find((x) => x.id === m.id);
-    if (s) { s.state = m.state; if (m.state === 'exited') s.exitCode = m.exitCode; }
+    if (s) { s.state = m.state; s.needsInput = m.needsInput; if (m.state === 'exited') s.exitCode = m.exitCode; }
     // A worktree you're not currently looking at that just finished gets the
     // "attention" indicator until you select it.
     if (m.ding && s && s.cwd !== state.selected) state.unseen[s.cwd] = true;
@@ -895,6 +916,32 @@ function connectEvents() {
     if (m.ding) { ding(); flashTitle(`✅ ${m.title} done`); }
   };
   es.onerror = () => { /* EventSource auto-reconnects */ };
+}
+
+// connectCoordEvents subscribes to the coordinator's cross-project fan-in stream
+// so the project rail shows which OTHER projects have a thread awaiting input —
+// the thing you need when switching between projects. state.projAtt maps a worker
+// id to the set of its sessions currently needing input.
+function connectCoordEvents() {
+  const es = new EventSource('/api/events'); // coordinator root (not the worker BASE)
+  es.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
+    if (!m.worker) return;
+    if (m.gone) { delete state.projAtt[m.worker]; renderProjects(); return; }
+    if (!m.id) return;
+    const set = state.projAtt[m.worker] || (state.projAtt[m.worker] = {});
+    const before = Object.keys(set).length;
+    if (m.needsInput && m.state !== 'exited') set[m.id] = true; else delete set[m.id];
+    // A non-active project newly needing input gets a gentle title nudge.
+    if (m.worker !== state.projectId && Object.keys(set).length > before) flashTitle('● a project needs input');
+    renderProjects();
+  };
+  es.onerror = () => { /* auto-reconnects */ };
+}
+
+// projNeedsInput is how many threads in a project are awaiting input.
+function projNeedsInput(workerId) {
+  return Object.keys(state.projAtt[workerId] || {}).length;
 }
 
 // handleBridge acts on an open/copy request from inside the container. The
@@ -1334,6 +1381,7 @@ async function initApp(authEnabled) {
   openDeepLinkedSession(); // jump to a tab linked from a cross-project palette hit
   await loadPorts();
   connectEvents();
+  connectCoordEvents(); // cross-project awaiting-input fan-in
   setInterval(loadPorts, 5000);
   setInterval(loadWorktrees, 15000); // refresh git stats
   setInterval(loadProjects, 10000);  // keep the project rail fresh

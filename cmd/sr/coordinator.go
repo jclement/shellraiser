@@ -33,6 +33,7 @@ type Coordinator struct {
 	dev     Device            // host-presence: where ports bind, the agent lives, URLs open
 	devlink *deviceLinkServer // device-link SSH server (nil unless device_link_addr set)
 	enroll  *enrollStore      // pending device enrollments
+	events  *coordEventHub    // cross-project SSE aggregator
 	pm      *PortMapper
 	ports   *portStore
 	mu      sync.Mutex
@@ -44,7 +45,9 @@ type Coordinator struct {
 var dataPrefixes = []string{"/api/", "/ws/", "/p/", "/db", "/edit"}
 
 func newCoordinator(port string, am *auth.Manager) *Coordinator {
-	return &Coordinator{reg: newRegistry(), port: port, auth: am, act: newActivity(), enroll: newEnrollStore(), proxies: map[string]*httputil.ReverseProxy{}}
+	c := &Coordinator{reg: newRegistry(), port: port, auth: am, act: newActivity(), enroll: newEnrollStore(), proxies: map[string]*httputil.ReverseProxy{}}
+	c.events = newCoordEventHub(c)
+	return c
 }
 
 // setDevice makes d the active host-presence device (a connecting remote device,
@@ -428,6 +431,7 @@ func (c *Coordinator) serveShell(w http.ResponseWriter, r *http.Request) {
 func (c *Coordinator) httpHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/workers", c.handleAPIWorkers)
+	mux.HandleFunc("GET /api/events", c.handleEvents) // cross-project SSE fan-in
 	mux.HandleFunc("GET /api/stats", c.handleStats)
 	mux.HandleFunc("GET /api/config", c.handleConfig)
 	mux.HandleFunc("POST /api/config", c.handleConfig)

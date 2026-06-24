@@ -46,25 +46,34 @@ const (
 
 // Event is emitted on every state transition and broadcast to UI listeners.
 type Event struct {
-	ID       string `json:"id"`
-	Kind     Kind   `json:"kind"`
-	Title    string `json:"title"`
-	Cwd      string `json:"cwd"`
-	State    State  `json:"state"`
-	Ding     bool   `json:"ding"`     // agent finished a unit of work
-	ExitCode int    `json:"exitCode"` // valid when State == exited
+	ID         string `json:"id"`
+	Kind       Kind   `json:"kind"`
+	Title      string `json:"title"`
+	Cwd        string `json:"cwd"`
+	State      State  `json:"state"`
+	Ding       bool   `json:"ding"`       // agent finished a unit of work
+	NeedsInput bool   `json:"needsInput"` // an agent that went quiet but is alive — waiting on you
+	ExitCode   int    `json:"exitCode"`   // valid when State == exited
 }
 
 // Info is the JSON-serializable snapshot of a session.
 type Info struct {
-	ID       string    `json:"id"`
-	Title    string    `json:"title"`
-	Kind     Kind      `json:"kind"`
-	Cwd      string    `json:"cwd"`
-	State    State     `json:"state"`
-	ExitCode int       `json:"exitCode"`
-	PID      int       `json:"pid"`
-	Created  time.Time `json:"created"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	Kind       Kind      `json:"kind"`
+	Cwd        string    `json:"cwd"`
+	State      State     `json:"state"`
+	NeedsInput bool      `json:"needsInput"`
+	ExitCode   int       `json:"exitCode"`
+	PID        int       `json:"pid"`
+	Created    time.Time `json:"created"`
+}
+
+// awaitingInput reports whether a session is an agent that has gone quiet but is
+// still alive — i.e. it finished its turn and is waiting for you. Derived from the
+// existing state machine; no extra timer needed.
+func awaitingInput(kind Kind, state State) bool {
+	return kind.isAgent() && state == StateIdle
 }
 
 type subscriber struct {
@@ -105,7 +114,8 @@ func (s *Session) Info() Info {
 	}
 	return Info{
 		ID: s.ID, Title: s.Title, Kind: s.Kind, Cwd: s.Cwd,
-		State: s.state, ExitCode: s.exitCode, PID: pid, Created: s.Created,
+		State: s.state, NeedsInput: awaitingInput(s.Kind, s.state),
+		ExitCode: s.exitCode, PID: pid, Created: s.Created,
 	}
 }
 
@@ -217,7 +227,7 @@ func (s *Session) monitor() {
 }
 
 func (s *Session) eventLocked(ding bool) *Event {
-	return &Event{ID: s.ID, Kind: s.Kind, Title: s.Title, Cwd: s.Cwd, State: s.state, Ding: ding, ExitCode: s.exitCode}
+	return &Event{ID: s.ID, Kind: s.Kind, Title: s.Title, Cwd: s.Cwd, State: s.state, Ding: ding, NeedsInput: awaitingInput(s.Kind, s.state), ExitCode: s.exitCode}
 }
 
 func (s *Session) handleExit() {
