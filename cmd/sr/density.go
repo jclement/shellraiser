@@ -34,8 +34,8 @@ func (a *activity) last(id string) time.Time {
 	return a.seen[id]
 }
 
-// idleGrace is the wall-clock idle window before a worker is stopped (default
-// 30m; SBOX_IDLE_GRACE overrides, in seconds; 0 disables).
+// idleGrace is the wall-clock idle window before a worker is PAUSED (default 30m;
+// SBOX_IDLE_GRACE overrides, in seconds; 0 disables reaping).
 func idleGrace() time.Duration {
 	if v := os.Getenv("SBOX_IDLE_GRACE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -43,6 +43,18 @@ func idleGrace() time.Duration {
 		}
 	}
 	return 30 * time.Minute
+}
+
+// idleDeepGrace is the longer idle window after which a PAUSED worker is fully
+// stopped to reclaim its memory (default 8h; SBOX_IDLE_STOP overrides, seconds;
+// 0 disables deep-stop so idle workers stay paused/resumable indefinitely).
+func idleDeepGrace() time.Duration {
+	if v := os.Getenv("SBOX_IDLE_STOP"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 8 * time.Hour
 }
 
 // workerBusy reports whether the worker has any running (agent/shell) session —
@@ -74,43 +86,63 @@ func workerBusy(w *Worker) bool {
 	return false
 }
 
-// reapIdle stops workers that have been idle past the grace window. Never stops a
-// busy worker (running session) or one touched within the window.
+// reapIdle is the two-tier density reaper. An idle worker is first PAUSED (its
+// processes — including a half-finished agent run holding conversation context —
+// freeze in memory and thaw perfectly on resume, so nothing is forgotten). Only
+// after a much longer deep-idle window is it fully STOPPED to reclaim memory
+// (its work survives on the worktree + journal, but in-memory agent state is
+// lost). Never touches a busy worker (running session) or one used within grace.
 func (c *Coordinator) reapIdle() {
 	grace := idleGrace()
 	if grace <= 0 {
 		return
 	}
+	deep := idleDeepGrace()
 	for _, w := range c.reg.list() {
-		if w.State != "running" {
-			continue
-		}
-		if time.Since(c.act.last(w.ID)) < grace {
-			continue
-		}
-		if workerBusy(w) {
-			c.act.touch(w.ID) // reset the clock while work is in flight
-			continue
-		}
-		if _, err := dockerRun("stop", w.Container); err == nil {
-			ui.Info("sr", "idle-stopped %s after %s", w.ID, grace)
-			c.reg.reconcileNow()
+		idle := time.Since(c.act.last(w.ID))
+		switch w.State {
+		case "running":
+			if idle < grace {
+				continue
+			}
+			if workerBusy(w) {
+				c.act.touch(w.ID) // reset the clock while work is in flight
+				continue
+			}
+			if _, err := dockerRun("pause", w.Container); err == nil {
+				ui.Info("sr", "idle-paused %s after %s (resumes instantly, agent state kept)", w.ID, grace)
+				c.pm.CloseWorker(w.ID) // tunnels are dead while frozen; re-armed on resume
+				c.reg.reconcileNow()
+			}
+		case "paused":
+			if deep > 0 && idle >= deep {
+				if _, err := dockerRun("stop", w.Container); err == nil {
+					ui.Info("sr", "deep-stopped %s after %s idle (memory reclaimed)", w.ID, deep)
+					c.reg.reconcileNow()
+				}
+			}
 		}
 	}
 }
 
-// resume starts a stopped worker and waits for it to serve, so a request to a
-// reaped project transparently wakes it.
+// resume wakes a reaped worker for the next request: unpause a frozen one (its
+// agent picks up exactly where it left off), or start a deep-stopped one.
 func (c *Coordinator) resume(w *Worker) bool {
-	if _, err := dockerRun("start", w.Container); err != nil {
+	var err error
+	if w.State == "paused" {
+		_, err = dockerRun("unpause", w.Container)
+	} else {
+		_, err = dockerRun("start", w.Container)
+	}
+	if err != nil {
 		return false
 	}
 	c.reg.reconcileNow()
 	if nw, ok := c.reg.get(w.ID); ok {
 		waitReady(nw)
 		if nw.State == "running" && nw.APIPort != "" {
-			// The pre-stop ssh client + agent relay died with the old container
-			// process; drop them and re-forward ports/agent against the fresh one.
+			// The pre-reap ssh client + agent relay died with the freeze/stop; drop
+			// them and re-forward ports/agent against the live container.
 			c.pm.CloseWorker(nw.ID)
 			c.onWorkerUp(nw)
 			return true

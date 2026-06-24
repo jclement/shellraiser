@@ -263,8 +263,6 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "no such project", http.StatusNotFound)
 		return
 	}
-	// Bare-metal: no container — stop/nuke just kill the in-process sessions and
-	// drop it from the registry (re-register with `sr`).
 	var err error
 	switch action {
 	case "stop":
@@ -272,8 +270,17 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 		c.pm.CloseWorker(id)
 		_, err = dockerRun("stop", worker.Container)
 	case "start":
-		if _, err = dockerRun("start", worker.Container); err == nil {
+		// A paused worker is unpaused (thaw); a stopped one is started.
+		verb := "start"
+		if worker.State == "paused" {
+			verb = "unpause"
+		}
+		if _, err = dockerRun(verb, worker.Container); err == nil {
 			c.reg.reconcileNow()
+			if nw, ok := c.reg.get(id); ok && nw.State == "running" {
+				c.pm.CloseWorker(id) // re-arm port forwards + agent against the live container
+				c.onWorkerUp(nw)
+			}
 		}
 	case "nuke":
 		runTeardown(worker)

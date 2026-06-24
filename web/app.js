@@ -267,10 +267,10 @@ function renderDevices() {
 async function manageProject(p) {
   const v = await modal({
     title: `Manage ${p.name}`,
-    bodyHTML: `<div class="text-muted">Stop pauses the container (data kept). Nuke removes the container, its volume, and network — your project source on disk is never touched.</div>`,
+    bodyHTML: `<div class="text-muted">Idle projects auto-pause (instant resume, agent state kept) then deep-stop after long idle. Stop frees memory now (data kept). Nuke removes the container, its volume, and network — your project source on disk is never touched.</div>`,
     actions: [
       { label: 'Cancel', value: null },
-      { label: p.state === 'running' ? 'Stop' : 'Start', value: p.state === 'running' ? 'stop' : 'start' },
+      { label: p.state === 'running' ? 'Stop' : (p.state === 'paused' ? 'Resume' : 'Start'), value: p.state === 'running' ? 'stop' : 'start' },
       { label: 'Nuke', danger: true, value: 'nuke' },
     ],
   });
