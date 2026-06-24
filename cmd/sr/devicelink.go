@@ -66,7 +66,8 @@ func startDeviceLink(co *Coordinator, dir string) {
 	}
 	s := newDeviceLinkServer(co, hostSigner)
 	co.devlink = s
-	ui.Info("device", "device-link SSH on %s (host key %s)", addr, fingerprintSHA256(hostSigner.PublicKey()))
+	ui.Info("device", "device link listening on %s (host key %s)", addr, fingerprintSHA256(hostSigner.PublicKey()))
+	ui.Info("device", "attach a device:  sr connect <this-backend-url>   then approve it in the UI")
 	go s.Serve(ln)
 }
 
@@ -201,6 +202,38 @@ func (s *deviceLinkServer) activate(rd *remoteDevice) {
 	ui.Info("device", "%q connected (caps: %s)", rd.name, rd.capList())
 }
 
+// deviceInfo is the UI-facing view of a connected device.
+type deviceInfo struct {
+	Name         string   `json:"name"`
+	Fingerprint  string   `json:"fingerprint"`
+	Capabilities []string `json:"capabilities"`
+	Commands     []string `json:"commands"`
+}
+
+// list returns every currently-connected device (for the UI / `sr devices`).
+func (s *deviceLinkServer) list() []deviceInfo {
+	s.mu.Lock()
+	devs := make([]*remoteDevice, 0, len(s.devices))
+	for _, d := range s.devices {
+		devs = append(devs, d)
+	}
+	s.mu.Unlock()
+	out := make([]deviceInfo, 0, len(devs))
+	for _, d := range devs {
+		d.mu.Lock()
+		caps := make([]string, 0, len(d.caps))
+		for c := range d.caps {
+			caps = append(caps, c)
+		}
+		out = append(out, deviceInfo{
+			Name: d.name, Fingerprint: d.fp,
+			Capabilities: caps, Commands: append([]string(nil), d.cmdList...),
+		})
+		d.mu.Unlock()
+	}
+	return out
+}
+
 func (s *deviceLinkServer) deactivate(rd *remoteDevice) {
 	s.mu.Lock()
 	if s.devices[rd.key()] == rd {
@@ -215,15 +248,15 @@ func (s *deviceLinkServer) deactivate(rd *remoteDevice) {
 // the Device interface by translating Forward/DialAgent/OpenURL into requests and
 // channels over the SSH link.
 type remoteDevice struct {
-	conn   *ssh.ServerConn
-	server *deviceLinkServer
-	mu     sync.Mutex
-	name   string
-	fp     string // authenticated pubkey fingerprint — the stable identity key
-	caps   map[string]bool
-	cmds   bool // device exposes at least one forwarded command
-	tags   map[string]DialFunc
-	seq    int
+	conn    *ssh.ServerConn
+	server  *deviceLinkServer
+	mu      sync.Mutex
+	name    string
+	fp      string // authenticated pubkey fingerprint — the stable identity key
+	caps    map[string]bool
+	cmdList []string // forwarded CLI commands this device exposes (op, gh, …)
+	tags    map[string]DialFunc
+	seq     int
 }
 
 // key is the stable identity for the connected-devices map: the pubkey
@@ -252,7 +285,12 @@ func (d *remoteDevice) setHello(h helloMsg) {
 			d.caps[c] = true
 		}
 	}
-	d.cmds = strings.TrimSpace(h.Commands) != ""
+	d.cmdList = d.cmdList[:0]
+	for _, c := range strings.Split(h.Commands, ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			d.cmdList = append(d.cmdList, c)
+		}
+	}
 }
 
 func (d *remoteDevice) Grants(cap string) bool {
@@ -327,7 +365,7 @@ func (d *remoteDevice) DialAgent() (net.Conn, error) {
 func (d *remoteDevice) CmdAvailable() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.cmds
+	return len(d.cmdList) > 0
 }
 
 func (d *remoteDevice) DialCmd() (net.Conn, error) {

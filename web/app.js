@@ -67,6 +67,7 @@ state.projects = [];
 state.portMaps = {}; // containerPort → host loopback port (active SSH -L tunnels)
 state.unseen = {};   // worktree path → true when a session finished but wasn't viewed
 state.projAtt = {};  // worker id → { sessionId: true } for threads awaiting input (cross-project)
+state.devices = [];  // connected host-presence devices (sr connect)
 state.reviewPath = null; // worktree path whose diff is open in the review panel
 state.wtFilter = ''; // quick-filter text for the worktree list
 state.dragPath = null;
@@ -232,6 +233,33 @@ function renderProjects() {
     st.appendChild(kebab);
     row.appendChild(st);
     row.onclick = () => { if (!active) location.href = '/w/' + p.id + '/'; };
+    nav.appendChild(row);
+  }
+}
+
+// ---- devices (the remote host-presence tier) ------------------------------
+
+async function loadDevices() {
+  try { state.devices = await capi('GET', '/api/devices'); } catch (_) { state.devices = []; }
+  renderDevices();
+}
+
+function renderDevices() {
+  const nav = $('#devices'); const section = $('#devices-section');
+  if (!nav) return;
+  section.classList.toggle('hidden', !(state.devices && state.devices.length));
+  nav.innerHTML = '';
+  for (const d of state.devices || []) {
+    const row = el('div', 'flex items-center gap-2 rounded-md px-2 py-1.5 text-sm');
+    const dot = el('span', 'inline-flex h-2 w-2 shrink-0 rounded-full'); dot.style.background = cssVar('--green');
+    dot.title = 'connected'; row.appendChild(dot);
+    const ic = el('span', 'text-faint'); ic.innerHTML = svg('box', 'icon icon-sm'); row.appendChild(ic);
+    const txt = el('div', 'min-w-0 flex-1');
+    txt.appendChild(el('div', 'truncate text-app', d.name || 'device'));
+    const grants = [].concat(d.capabilities || [], (d.commands || []).map((c) => c + '()'));
+    if (grants.length) txt.appendChild(el('div', 'truncate text-[10px] text-faint', grants.join(' · ')));
+    row.appendChild(txt);
+    row.title = d.fingerprint || '';
     nav.appendChild(row);
   }
 }
@@ -1477,9 +1505,11 @@ async function initApp(authEnabled) {
   await loadSessions();
   openDeepLinkedSession(); // jump to a tab linked from a cross-project palette hit
   await loadPorts();
+  loadDevices();
   connectEvents();
   connectCoordEvents(); // cross-project awaiting-input fan-in
   setInterval(loadPorts, 5000);
+  setInterval(loadDevices, 10000);
   setInterval(loadWorktrees, 15000); // refresh git stats
   setInterval(loadProjects, 10000);  // keep the project rail fresh
 }

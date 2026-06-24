@@ -197,6 +197,16 @@ func (c *Coordinator) handleAPIWorkers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
+// handleDevices lists the devices currently linked to this backend (host
+// presence: port forwarding, SSH agent, forwarded CLI tools).
+func (c *Coordinator) handleDevices(w http.ResponseWriter, r *http.Request) {
+	out := []deviceInfo{}
+	if c.devlink != nil {
+		out = c.devlink.list()
+	}
+	writeJSON(w, out)
+}
+
 // handleStats aggregates live stats across all projects for the About page.
 func (c *Coordinator) handleStats(w http.ResponseWriter, r *http.Request) {
 	c.reg.reconcile()
@@ -432,6 +442,7 @@ func (c *Coordinator) httpHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/workers", c.handleAPIWorkers)
 	mux.HandleFunc("GET /api/events", c.handleEvents) // cross-project SSE fan-in
+	mux.HandleFunc("GET /api/devices", c.handleDevices)
 	mux.HandleFunc("GET /api/stats", c.handleStats)
 	mux.HandleFunc("GET /api/config", c.handleConfig)
 	mux.HandleFunc("POST /api/config", c.handleConfig)
