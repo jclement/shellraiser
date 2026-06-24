@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -175,10 +176,11 @@ func volumeName(id string) string    { return "sr_" + id + "_vol" }
 
 var idRe = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
 
-// boxID resolves a project's stable identity: an explicit `id` in .shellraiser.toml,
-// else the sanitized folder basename. (Basename can collide across same-named
-// repos; the coordinator de-dupes against the registry and the user can pin an
-// id in config — a path hash is the documented fallback.)
+// boxID resolves a project's stable identity: an explicit `id` in .shellraiser.toml
+// (the user owns its uniqueness), else the sanitized folder basename plus a short
+// hash of the full path. The hash disambiguates same-named repos (~/a/api vs
+// ~/b/api) so the id stays unique across the registry, proxy cache, docker
+// network/volume, and /w/<id>/ — all of which key on it.
 func boxID(project string) string {
 	if v := tomlScalar(project, "id"); v != "" {
 		return idRe.ReplaceAllString(v, "-")
@@ -187,7 +189,14 @@ func boxID(project string) string {
 	if base == "" {
 		base = "project"
 	}
-	return base
+	return base + "-" + shortHash(project)
+}
+
+// shortHash is a 6-hex-char content hash, used to disambiguate ids derived from a
+// non-unique basename.
+func shortHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:6]
 }
 
 // tomlScalar does a deliberately tiny line-scan for a top-level `key = "value"`
@@ -266,6 +275,10 @@ func ensureWorker(id, project, image string) (*Worker, error) {
 	args := []string{
 		"run", "-d", "--name", w.Container,
 		"--network", w.Network,
+		// Survive a host/docker reboot: a worker that was running comes back up.
+		// `unless-stopped` (not `always`) respects an explicit `docker stop`, so an
+		// idle-reaped or operator-stopped worker stays stopped until next used.
+		"--restart", "unless-stopped",
 		"--label", "shellraiser.managed=1",
 		"--label", "shellraiser.id=" + id,
 		"--label", "shellraiser.project=" + project,

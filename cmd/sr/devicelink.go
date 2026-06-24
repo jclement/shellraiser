@@ -100,7 +100,13 @@ func (s *deviceLinkServer) authDevice(conn ssh.ConnMetadata, key ssh.PublicKey) 
 	for _, d := range hostCfg.AuthorizedDevices {
 		if strings.TrimSpace(d.Key) == line {
 			s.lockout.reset(id)
-			return &ssh.Permissions{Extensions: map[string]string{"device-name": d.Name}}, nil
+			// Key device identity on the authenticated pubkey fingerprint, not the
+			// (user-chosen, collidable) name — two machines sharing a hostname must
+			// not stomp each other's session.
+			return &ssh.Permissions{Extensions: map[string]string{
+				"device-name": d.Name,
+				"device-fp":   fingerprintSHA256(key),
+			}}, nil
 		}
 	}
 	s.lockout.fail(id)
@@ -130,6 +136,7 @@ func (s *deviceLinkServer) handleConn(c net.Conn) {
 	if n := sc.Permissions.Extensions["device-name"]; n != "" {
 		rd.name = n
 	}
+	rd.fp = sc.Permissions.Extensions["device-fp"]
 	go s.handleChannels(rd, chans)
 	go s.handleRequests(rd, reqs)
 	go rd.keepalive()
@@ -188,7 +195,7 @@ func (s *deviceLinkServer) handleChannels(rd *remoteDevice, chans <-chan ssh.New
 // (last-connected-wins until per-device routing lands).
 func (s *deviceLinkServer) activate(rd *remoteDevice) {
 	s.mu.Lock()
-	s.devices[rd.name] = rd
+	s.devices[rd.key()] = rd
 	s.mu.Unlock()
 	s.co.setDevice(rd)
 	ui.Info("device", "%q connected (caps: %s)", rd.name, rd.capList())
@@ -196,8 +203,8 @@ func (s *deviceLinkServer) activate(rd *remoteDevice) {
 
 func (s *deviceLinkServer) deactivate(rd *remoteDevice) {
 	s.mu.Lock()
-	if s.devices[rd.name] == rd {
-		delete(s.devices, rd.name)
+	if s.devices[rd.key()] == rd {
+		delete(s.devices, rd.key())
 	}
 	s.mu.Unlock()
 	s.co.clearDevice(rd)
@@ -212,10 +219,20 @@ type remoteDevice struct {
 	server *deviceLinkServer
 	mu     sync.Mutex
 	name   string
+	fp     string // authenticated pubkey fingerprint — the stable identity key
 	caps   map[string]bool
 	cmds   bool // device exposes at least one forwarded command
 	tags   map[string]DialFunc
 	seq    int
+}
+
+// key is the stable identity for the connected-devices map: the pubkey
+// fingerprint, falling back to name if (somehow) absent.
+func (d *remoteDevice) key() string {
+	if d.fp != "" {
+		return d.fp
+	}
+	return d.name
 }
 
 func newRemoteDevice(conn *ssh.ServerConn, s *deviceLinkServer) *remoteDevice {

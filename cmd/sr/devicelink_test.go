@@ -86,7 +86,9 @@ func TestDeviceLinkForward(t *testing.T) {
 	var rd *remoteDevice
 	for i := 0; i < 100; i++ {
 		srv.mu.Lock()
-		rd = srv.devices["test-dev"]
+		for _, d := range srv.devices { // keyed by pubkey fingerprint now
+			rd = d
+		}
 		srv.mu.Unlock()
 		if rd != nil && rd.Grants(capBindPort) {
 			break

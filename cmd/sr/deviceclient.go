@@ -244,6 +244,7 @@ func (dc *deviceClient) connectOnce(sig chan os.Signal) error {
 	ui.Info("connect", "linked to %s as %q (granting: %s)", dc.backend.URL, dc.name, strings.Join(grants, ", "))
 
 	go dc.serveChannels(chans)
+	go dc.keepalive(conn) // detect a dead/powered-off backend fast → reconnect
 	done := make(chan error, 1)
 	go func() { done <- dc.serveRequests(conn, reqs) }()
 
@@ -257,6 +258,29 @@ func (dc *deviceClient) connectOnce(sig chan os.Signal) error {
 			err = fmt.Errorf("connection closed")
 		}
 		return err
+	}
+}
+
+// keepalive pings the backend with app-level keepalive@sr requests and a read
+// deadline. A powered-off backend leaves the TCP connection half-open for minutes
+// otherwise — hanging every bound listener; here a missed ping closes the conn so
+// the reconnect loop (and re-binding) takes over within ~a minute.
+func (dc *deviceClient) keepalive(conn ssh.Conn) {
+	t := time.NewTicker(50 * time.Second)
+	defer t.Stop()
+	for range t.C {
+		done := make(chan error, 1)
+		go func() { _, _, err := conn.SendRequest("keepalive@sr", true, nil); done <- err }()
+		select {
+		case err := <-done:
+			if err != nil {
+				_ = conn.Close()
+				return
+			}
+		case <-time.After(10 * time.Second):
+			_ = conn.Close()
+			return
+		}
 	}
 }
 

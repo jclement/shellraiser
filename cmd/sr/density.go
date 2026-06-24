@@ -94,7 +94,7 @@ func (c *Coordinator) reapIdle() {
 		}
 		if _, err := dockerRun("stop", w.Container); err == nil {
 			ui.Info("sr", "idle-stopped %s after %s", w.ID, grace)
-			c.reg.adopt(w.ID)
+			c.reg.reconcileNow()
 		}
 	}
 }
@@ -105,7 +105,7 @@ func (c *Coordinator) resume(w *Worker) bool {
 	if _, err := dockerRun("start", w.Container); err != nil {
 		return false
 	}
-	c.reg.adopt(w.ID)
+	c.reg.reconcileNow()
 	if nw, ok := c.reg.get(w.ID); ok {
 		waitReady(nw)
 		if nw.State == "running" && nw.APIPort != "" {

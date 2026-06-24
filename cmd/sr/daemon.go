@@ -119,7 +119,7 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 	co.pm = newPortMapper(signer, co.dev, tl)
 	co.ports = newPortStore(dir)
 	startDeviceLink(co, dir) // device-link SSH server (no-op unless device_link_addr is set)
-	co.reg.reconcile()       // re-adopt any workers from a previous run
+	co.reg.reconcileNow()    // re-adopt any workers from a previous run
 	for _, w := range co.reg.list() {
 		if w.State == "running" && w.APIPort != "" {
 			co.onWorkerUp(w) // re-forward ports + relay the agent for survivors

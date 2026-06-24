@@ -55,6 +55,17 @@ func (s *portStore) del(id string, container int) {
 	s.saveLocked()
 }
 
+// delWorker drops every remembered mapping for a worker (on nuke), so a future
+// same-id project never re-binds stale ports.
+func (s *portStore) delWorker(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.m[id]; ok {
+		delete(s.m, id)
+		s.saveLocked()
+	}
+}
+
 func (s *portStore) saveLocked() {
 	b, _ := json.MarshalIndent(s.m, "", "  ")
 	_ = os.WriteFile(s.path, b, 0o600)

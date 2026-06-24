@@ -35,7 +35,7 @@ func waitReady(w *Worker) {
 // query/lifecycle subcommands that run without a coordinator process.
 func reconciledRegistry() *Registry {
 	r := newRegistry()
-	r.reconcile()
+	r.reconcileNow()
 	return r
 }
 

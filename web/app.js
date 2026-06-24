@@ -98,6 +98,15 @@ function toast(msg, kind = 'error') {
 
 // ---- modal dialogs (no native confirm/prompt) ----------------------------
 
+// noAutofill stops password managers (1Password, LastPass, the browser) from
+// offering to fill app inputs like the branch name — they aren't credentials.
+function noAutofill(elm) {
+  elm.setAttribute('autocomplete', 'off');
+  elm.setAttribute('data-1p-ignore', '');     // 1Password
+  elm.setAttribute('data-lpignore', 'true');  // LastPass
+  elm.setAttribute('data-form-type', 'other'); // Dashlane/Bitwarden hint
+}
+
 function modal({ title, bodyHTML, fields, actions }) {
   return new Promise((resolve) => {
     const root = $('#modal-root');
@@ -118,6 +127,7 @@ function modal({ title, bodyHTML, fields, actions }) {
       if (f.type === 'textarea') {
         const ta = el('textarea', 'input w-full px-2.5 py-2 text-sm text-app');
         ta.rows = f.rows || 3; ta.placeholder = f.placeholder || ''; ta.value = f.value || '';
+        noAutofill(ta);
         inputs[f.name] = ta; body.appendChild(ta); continue;
       }
       if (f.type === 'segmented') {
@@ -135,6 +145,7 @@ function modal({ title, bodyHTML, fields, actions }) {
       }
       const inp = el('input', 'input w-full px-2.5 py-2 text-sm text-app' + (f.mono ? ' tracking-wider' : ''));
       if (f.type === 'password') inp.type = 'password';
+      else noAutofill(inp); // app fields (branch names, etc.) are not credentials — keep 1Password out
       inp.placeholder = f.placeholder || ''; inp.value = f.value || '';
       if (f.datalist && f.datalist.length) {
         const dl = el('datalist'); dl.id = 'dl-' + f.name;

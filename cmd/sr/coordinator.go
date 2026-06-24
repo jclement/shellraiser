@@ -285,7 +285,7 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 		_, err = dockerRun("stop", worker.Container)
 	case "start":
 		if _, err = dockerRun("start", worker.Container); err == nil {
-			c.reg.adopt(id)
+			c.reg.reconcileNow()
 		}
 	case "nuke":
 		runTeardown(worker)
@@ -293,6 +293,7 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 		_, _ = dockerRun("rm", "-f", worker.Container)
 		_, _ = dockerRun("volume", "rm", worker.Volume)
 		_ = removeNetwork(worker.Network)
+		c.ports.delWorker(id) // forget remembered port mappings (else they leak/restick)
 		c.reg.remove(id)
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
@@ -302,7 +303,7 @@ func (c *Coordinator) handleWorkerAction(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	c.reg.reconcile()
+	c.reg.reconcileNow() // a mutation must reflect immediately, not after the throttle
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
