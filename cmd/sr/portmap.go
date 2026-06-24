@@ -196,6 +196,21 @@ func (m *PortMapper) bindTailnet(workerID string, containerPort int, dial DialFu
 	serveListener(tln, dial)
 }
 
+// unmapPorts tears down all of a worker's port forwards (but not its ssh client,
+// agent, or command relay), so they can be rebound onto a newly-active device.
+// The agent/cmd relays need no rebind — their in-worker accept loops dial the
+// current device fresh on each connection, so they follow the active device.
+func (m *PortMapper) unmapPorts(workerID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, f := range m.fwds[workerID] {
+		for _, c := range f.closers {
+			c()
+		}
+	}
+	delete(m.fwds, workerID)
+}
+
 // Unmap tears down a single forward.
 func (m *PortMapper) Unmap(workerID string, containerPort int) {
 	m.mu.Lock()

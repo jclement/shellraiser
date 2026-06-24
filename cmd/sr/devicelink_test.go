@@ -56,7 +56,7 @@ func TestDeviceLinkForward(t *testing.T) {
 	hostCfg.AuthorizedDevices = []authorizedDevice{{Name: "test-dev", Key: authorizedLine(devSigner)}}
 	t.Cleanup(func() { hostCfg.AuthorizedDevices = nil })
 
-	co := &Coordinator{dev: localDevice{}}
+	co := &Coordinator{dev: localDevice{}, reg: newRegistry()}
 	co.pm = newPortMapper(nil, localDevice{}, nil)
 
 	srv := newDeviceLinkServer(co, hostSigner)
@@ -165,7 +165,7 @@ func TestDeviceLinkRejectsUnauthorized(t *testing.T) {
 
 func co(t *testing.T) *Coordinator {
 	t.Helper()
-	c := &Coordinator{dev: localDevice{}}
+	c := &Coordinator{dev: localDevice{}, reg: newRegistry()}
 	c.pm = newPortMapper(nil, localDevice{}, nil)
 	return c
 }

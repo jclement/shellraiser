@@ -58,6 +58,7 @@ func (c *Coordinator) setDevice(d Device) {
 	c.dev = d
 	c.mu.Unlock()
 	c.pm.setDevice(d)
+	c.rebindPorts() // a newly-active device must actually get the dev-server ports
 }
 
 func (c *Coordinator) clearDevice(d Device) {
@@ -68,6 +69,22 @@ func (c *Coordinator) clearDevice(d Device) {
 	cur := c.dev
 	c.mu.Unlock()
 	c.pm.setDevice(cur)
+	c.rebindPorts()
+}
+
+// rebindPorts re-forwards every running worker's declared ports onto the active
+// device after a device change (connect/disconnect). The bind_port listeners are
+// the only thing that doesn't auto-follow the active device (agent/cmd relays do),
+// so they're torn down and re-mapped here. (Simultaneous binding on multiple
+// devices at once is a further refactor — this is active-device routing.)
+func (c *Coordinator) rebindPorts() {
+	for _, w := range c.reg.list() {
+		if w.State != "running" || w.APIPort == "" {
+			continue
+		}
+		c.pm.unmapPorts(w.ID)
+		go c.autoMap(w)
+	}
 }
 
 func (c *Coordinator) proxyFor(w *Worker) *httputil.ReverseProxy {
