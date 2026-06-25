@@ -49,3 +49,53 @@ run = "go run ./cmd/sr nuke \"$(basename \"$PWD\")\""
 [tasks.package]
 description = "Snapshot release build (goreleaser, no publish)"
 run = "goreleaser release --snapshot --clean"
+
+[tasks.release]
+description = "Tag + push the next version → CI builds & publishes sr + the Homebrew tap. Usage: mise run release [patch|minor|major|vX.Y.Z]"
+depends = ["worker-bins"] # populate the embed dir so the local test gate builds
+run = """
+set -euo pipefail
+bump="${1:-${BUMP:-patch}}"
+
+# --- preflight ---------------------------------------------------------------
+branch=$(git rev-parse --abbrev-ref HEAD)
+[ "$branch" = "main" ] || { echo "✗ must be on main (you are on '$branch')"; exit 1; }
+[ -z "$(git status --porcelain)" ] || { echo "✗ working tree is dirty — commit or stash first"; exit 1; }
+git fetch --quiet origin main --tags
+[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || \
+  { echo "✗ local main != origin/main — push (or pull) first so the tag points at published code"; exit 1; }
+
+# --- fail fast locally (CI runs these too) -----------------------------------
+go vet ./...
+go test ./...
+
+# --- compute the next version ------------------------------------------------
+latest=$(git tag --list 'v*' --sort=-v:refname | head -1)
+case "$bump" in
+  v[0-9]*.[0-9]*.[0-9]*) next="$bump" ;;                         # explicit
+  major|minor|patch)
+    if [ -z "$latest" ]; then next="v0.1.0"; else
+      v=${latest#v}; MA=${v%%.*}; r=${v#*.}; MI=${r%%.*}; PA=${r#*.}
+      case "$bump" in
+        major) MA=$((MA+1)); MI=0; PA=0 ;;
+        minor) MI=$((MI+1)); PA=0 ;;
+        patch) PA=$((PA+1)) ;;
+      esac
+      next="v$MA.$MI.$PA"
+    fi ;;
+  *) echo "✗ unknown bump '$bump' (use patch|minor|major or vX.Y.Z)"; exit 1 ;;
+esac
+git rev-parse "$next" >/dev/null 2>&1 && { echo "✗ tag $next already exists"; exit 1; }
+
+# --- confirm, tag, push ------------------------------------------------------
+echo "→ releasing $next  (previous: ${latest:-none})  at $(git rev-parse --short HEAD)"
+if [ "${RELEASE_YES:-}" != "1" ]; then
+  printf "push tag %s and trigger the release? [y/N] " "$next"
+  read -r ans; case "$ans" in y|Y) ;; *) echo "aborted"; exit 1 ;; esac
+fi
+git tag -a "$next" -m "Release $next"
+git push origin "$next"
+echo "✓ pushed $next — CI is building + publishing the GitHub release and the Homebrew formula."
+echo "  watch:  gh run watch --exit-status   ·   https://github.com/jclement/shellraiser/actions"
+echo "  install after it's green:  brew install jclement/tap/shellraiser"
+"""
