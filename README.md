@@ -27,7 +27,7 @@
 
 ```bash
 # one-time: build sr (cross-compiles + embeds the linux worker binaries)
-mise run build         # → dist/sr     (or: brew install jclement/tap/sr)
+mise run build         # → dist/sr     (or: brew install jclement/tap/shellraiser)
 
 cd ~/dev/project-a && sr        # builds the image on first run, opens the UI
 cd ~/dev/project-b && sr        # joins the SAME coordinator — one UI, one port
