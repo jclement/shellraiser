@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/jclement/shellraiser/internal/config"
 	"github.com/jclement/shellraiser/internal/ui"
 )
 
@@ -170,7 +171,36 @@ func cmdLogin(_ []string) {
 		"bash", "-lc", "mkdir -p /agents/claude /agents/codex && cd /root && exec bash")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	_ = cmd.Run()
-	ui.Info("login", "done — new workers will pick up these credentials")
+	// Apply the fresh credentials to already-running workers now — the entrypoint
+	// only seeds at startup, so without this a login after a worker started (or a
+	// re-login) wouldn't take effect until a restart.
+	applyAgentCredsToRunningWorkers()
+	ui.Info("login", "done — applied to running workers; new ones pick them up too")
+}
+
+// applyAgentCredsToRunningWorkers copies the shared credentials into every
+// running, non-isolated worker's per-worker config dir (the creds are root-owned
+// 0600 on the read-only /agents mount, so the copy + chown run as root).
+func applyAgentCredsToRunningWorkers() {
+	const script = `
+[ -f /agents/claude/.credentials.json ] && cp -f /agents/claude/.credentials.json "$CLAUDE_CONFIG_DIR/.credentials.json" && chown ubuntu:ubuntu "$CLAUDE_CONFIG_DIR/.credentials.json"
+[ -f /agents/codex/auth.json ] && cp -f /agents/codex/auth.json "$CODEX_HOME/auth.json" && chown ubuntu:ubuntu "$CODEX_HOME/auth.json"
+true`
+	n := 0
+	for _, w := range reconciledRegistry().list() {
+		if w.State != "running" {
+			continue
+		}
+		if cfg, _ := config.Load(w.Project); cfg.IsolatedAgents {
+			continue // isolated projects don't mount the shared /agents
+		}
+		if exec.Command("docker", "exec", "-u", "root", w.Container, "sh", "-lc", script).Run() == nil {
+			n++
+		}
+	}
+	if n > 0 {
+		ui.Info("login", "refreshed credentials in %d running worker(s)", n)
+	}
 }
 
 func cmdDoctor(_ []string) {

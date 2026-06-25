@@ -247,16 +247,19 @@ fi
 #     never clobber a locally-refreshed token.
 seed_agents() {
   [ -d /agents ] || return 0
+  # Refresh ONLY the credential file each start (never the hot .claude.json /
+  # sessions), so a re-login is picked up on restart rather than stuck on a stale
+  # token.
   if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
     run_user mkdir -p "$CLAUDE_CONFIG_DIR"
-    if [ -f /agents/claude/.credentials.json ] && [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
-      cp /agents/claude/.credentials.json "$CLAUDE_CONFIG_DIR/.credentials.json" 2>/dev/null || true
+    if [ -f /agents/claude/.credentials.json ]; then
+      cp -f /agents/claude/.credentials.json "$CLAUDE_CONFIG_DIR/.credentials.json" 2>/dev/null || true
     fi
   fi
   if [ -n "${CODEX_HOME:-}" ]; then
     run_user mkdir -p "$CODEX_HOME"
-    if [ -f /agents/codex/auth.json ] && [ ! -f "$CODEX_HOME/auth.json" ]; then
-      cp /agents/codex/auth.json "$CODEX_HOME/auth.json" 2>/dev/null || true
+    if [ -f /agents/codex/auth.json ]; then
+      cp -f /agents/codex/auth.json "$CODEX_HOME/auth.json" 2>/dev/null || true
     fi
   fi
   chown -R "$USERNAME:$USERNAME" "${CLAUDE_CONFIG_DIR:-/dev/null}" "${CODEX_HOME:-/dev/null}" 2>/dev/null || true
