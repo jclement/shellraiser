@@ -80,6 +80,31 @@ func newPortMapper(signer ssh.Signer, dev Device, ts tailnetListener) *PortMappe
 	return pm
 }
 
+// forget removes a relay listener from its map once its accept loop exits (only
+// if it's still the current one), so a dead relay is rebuilt on the next heal.
+func (m *PortMapper) forget(set map[string]net.Listener, workerID string, ln net.Listener) {
+	m.mu.Lock()
+	if set[workerID] == ln {
+		delete(set, workerID)
+	}
+	m.mu.Unlock()
+}
+
+// hasAgent / hasCmd report whether a worker's relay is currently established.
+func (m *PortMapper) hasAgent(workerID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.agents[workerID]
+	return ok
+}
+
+func (m *PortMapper) hasCmd(workerID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.cmds[workerID]
+	return ok
+}
+
 // clientLive reports whether the cached SSH client to a worker is still
 // answering — false if there's none or it has dropped (e.g. the worker was
 // idle-paused and its sshd froze, timing the client out). Used to detect relays
@@ -297,10 +322,11 @@ func (m *PortMapper) ForwardAgent(w *Worker) error {
 	m.mu.Unlock()
 
 	go func() {
+		defer m.forget(m.agents, w.ID, ln) // relay died → drop it so healWiring rebuilds
 		for {
 			worker, err := ln.Accept()
 			if err != nil {
-				return // listener closed (worker gone)
+				return // forward closed (client dropped, worker gone, etc.)
 			}
 			go func() {
 				defer worker.Close()
@@ -351,6 +377,7 @@ func (m *PortMapper) ForwardCmd(w *Worker) error {
 	m.cmds[w.ID] = ln
 	m.mu.Unlock()
 	go func() {
+		defer m.forget(m.cmds, w.ID, ln) // relay died → drop it so healWiring rebuilds
 		for {
 			worker, err := ln.Accept()
 			if err != nil {

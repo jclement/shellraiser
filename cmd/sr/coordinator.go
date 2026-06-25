@@ -78,16 +78,25 @@ func (c *Coordinator) clearDevice(d Device) {
 // dropped client leaves the agent relay dead until the next register/resume, so
 // `ssh git@github.com` inside a long-lived container silently loses the agent.
 func (c *Coordinator) healWiring() {
+	wantAgent := hostCfg.SSHPassthrough && c.dev.AgentAvailable()
 	for _, w := range c.reg.list() {
 		if w.State != "running" || w.APIPort == "" {
 			continue
 		}
-		if c.pm.clientLive(w.ID) {
+		if !c.pm.clientLive(w.ID) {
+			// The SSH connection dropped — tear everything down so it's rebuilt
+			// against a fresh client.
+			ui.Info("sr", "re-wiring %s (ssh tunnel dropped)", w.ID)
+			c.pm.CloseWorker(w.ID)
+			c.onWorkerUp(w)
 			continue
 		}
-		ui.Info("sr", "re-wiring %s (ssh tunnel dropped)", w.ID)
-		c.pm.CloseWorker(w.ID)
-		c.onWorkerUp(w)
+		// Client is alive but a relay's accept loop may have died (it removes
+		// itself from the map on exit) — re-establish whatever's missing.
+		if (wantAgent && !c.pm.hasAgent(w.ID)) || !c.pm.hasCmd(w.ID) {
+			ui.Info("sr", "re-arming relays for %s", w.ID)
+			c.onWorkerUp(w)
+		}
 	}
 }
 
