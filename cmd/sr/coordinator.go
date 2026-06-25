@@ -194,7 +194,7 @@ func (c *Coordinator) controlMux() *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		id := boxID(req.Project)
+		id := resolveID(req.Project)
 		worker, err := provisionWorker(id, req.Project, req.Image)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

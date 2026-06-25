@@ -131,7 +131,7 @@ func cmdUp(args []string) {
 	// Build the worker image from embedded assets up-front so progress streams to
 	// THIS terminal (the first-run base build takes a few minutes); register then
 	// only has to start the container.
-	ui.Boot("sr", "project", boxID(project), "path", project)
+	ui.Boot("sr", "project", resolveID(project), "path", project)
 	image, err := resolveImage(project)
 	if err != nil {
 		fatal("%v", err)

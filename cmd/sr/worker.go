@@ -148,6 +148,44 @@ func shortHash(s string) string {
 	return hex.EncodeToString(sum[:])[:6]
 }
 
+// resolveID is boxID with backward-compatibility: if a managed container already
+// exists for this exact project path (under ANY id scheme), reuse its id rather
+// than minting a new one. Without this, changing the id scheme (e.g. adding the
+// path hash) orphans a project's existing container + volume on upgrade. A live
+// container is preferred over a stopped one.
+func resolveID(project string) string {
+	if id := existingWorkerID(project); id != "" {
+		return id
+	}
+	return boxID(project)
+}
+
+// existingWorkerID returns the id of a managed container for this project path,
+// preferring a running one, or "" if none.
+func existingWorkerID(project string) string {
+	out, err := dockerOut("ps", "-a",
+		"--filter", "label=shellraiser.role=worker",
+		"--filter", "label=shellraiser.project="+project,
+		"--format", `{{.State}}`+fieldSep+`{{.Label "shellraiser.id"}}`)
+	if err != nil {
+		return ""
+	}
+	first := ""
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		f := strings.SplitN(line, fieldSep, 2)
+		if len(f) != 2 || f[1] == "" {
+			continue
+		}
+		if f[0] == "running" {
+			return f[1] // a live container wins outright
+		}
+		if first == "" {
+			first = f[1]
+		}
+	}
+	return first
+}
+
 // tomlScalar does a deliberately tiny line-scan for a top-level `key = "value"`
 // in .shellraiser.toml — enough to read `id` before the full config loader exists on
 // the host side. (The worker still parses the file authoritatively.)

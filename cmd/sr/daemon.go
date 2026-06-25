@@ -132,7 +132,7 @@ func runDaemon(dir, port string, noAuth, tailnet bool, initProject, initImage st
 
 	// Foreground dev mode: register this project now and stop it on Ctrl-C.
 	if initProject != "" {
-		id := boxID(initProject)
+		id := resolveID(initProject)
 		w, werr := provisionWorker(id, initProject, initImage)
 		if werr != nil {
 			fatal("%v", werr)
