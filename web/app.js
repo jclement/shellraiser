@@ -220,10 +220,11 @@ function renderProjects() {
     const st = el('span', 'ml-auto flex shrink-0 items-center gap-1');
     const att = projNeedsInput(p.id);
     if (att > 0) {
-      const badge = el('span', 'inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-black animate-pulse', att > 1 ? String(att) : '');
+      const badge = att > 1
+        ? el('span', 'inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-black animate-pulse', String(att))
+        : el('span', 'inline-block h-2 w-2 shrink-0 rounded-full animate-pulse');
       badge.style.background = needsInputColor;
       badge.title = `${att} thread${att > 1 ? 's' : ''} awaiting input`;
-      if (att === 1) { badge.classList.remove('min-w-4', 'px-1'); badge.classList.add('h-2', 'w-2'); }
       st.appendChild(badge);
     }
     if (p.state !== 'running') st.appendChild(el('span', 'text-[10px] text-faint', p.state));
@@ -462,9 +463,16 @@ function statusDot(status) {
 // Dense one-line git summary for the worktree row's second line.
 function wtMetaLine(w) {
   const parts = [];
-  if (w.dirty) parts.push('<span style="color:var(--yellow)" title="uncommitted changes">●</span>');
-  if (w.added || w.deleted) parts.push(`<span style="color:var(--green)">+${w.added}</span><span style="color:var(--red)">−${w.deleted}</span>`);
-  if (w.ahead) parts.push(`<span class="text-muted" title="commits ahead of base">${w.ahead}↟</span>`);
+  // Pending (uncommitted) changes, as a file count.
+  if (w.dirtyFiles) parts.push(`<span style="color:var(--yellow)" title="${w.dirtyFiles} file${w.dirtyFiles > 1 ? 's' : ''} with uncommitted changes">●&nbsp;${w.dirtyFiles}</span>`);
+  // Commits ahead (+) / behind (−) the parent (base) branch since they diverged.
+  if (w.ahead || w.behind) {
+    let s = '';
+    if (w.ahead) s += `<span style="color:var(--green)">+${w.ahead}</span>`;
+    if (w.behind) s += `<span style="color:var(--red)">−${w.behind}</span>`;
+    parts.push(`<span title="commits ahead / behind the base branch">${s}</span>`);
+  }
+  // Unpushed (↑) / behind (↓) the upstream tracking branch.
   if (w.hasUpstream && (w.aheadOrigin || w.behindOrigin)) {
     let s = ''; if (w.aheadOrigin) s += `↑${w.aheadOrigin}`; if (w.behindOrigin) s += `↓${w.behindOrigin}`;
     parts.push(`<span class="text-accent" title="vs origin">${s}</span>`);

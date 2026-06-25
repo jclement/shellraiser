@@ -31,8 +31,10 @@ type Worktree struct {
 	// Stats (relative to the main worktree's branch, and to the upstream).
 	Added        int  `json:"added"`        // lines added (committed vs base + uncommitted)
 	Deleted      int  `json:"deleted"`      // lines deleted
-	Ahead        int  `json:"ahead"`        // commits ahead of the base branch
+	Ahead        int  `json:"ahead"`        // commits ahead of the base branch (since divergence)
+	Behind       int  `json:"behind"`       // commits behind the base branch (since divergence)
 	Dirty        bool `json:"dirty"`        // uncommitted changes present
+	DirtyFiles   int  `json:"dirtyFiles"`   // number of files with uncommitted changes
 	AheadOrigin  int  `json:"aheadOrigin"`  // commits ahead of upstream (unpushed)
 	BehindOrigin int  `json:"behindOrigin"` // commits behind upstream
 	HasUpstream  bool `json:"hasUpstream"`  // an upstream tracking branch is set
@@ -102,14 +104,21 @@ func annotate(trees []Worktree) {
 		if wt.Bare {
 			continue
 		}
-		// Uncommitted changes vs HEAD (working tree + index).
-		wt.Dirty = len(strings.TrimSpace(string(out(wt.Path, "status", "--porcelain")))) > 0
+		// Uncommitted changes vs HEAD (working tree + index): count changed files.
+		if st := strings.TrimSpace(string(out(wt.Path, "status", "--porcelain"))); st != "" {
+			wt.DirtyFiles = strings.Count(st, "\n") + 1
+		}
+		wt.Dirty = wt.DirtyFiles > 0
 		a, d := diffStat(wt.Path, "HEAD")
-		// Committed changes vs the base branch (for non-main branches).
+		// Committed changes vs the base branch (for non-main branches): line diff
+		// and commits ahead/behind since the two diverged (merge-base).
 		if base != "" && !wt.Detached && wt.Branch != base {
 			ca, cd := diffStat(wt.Path, base+"...HEAD")
 			a, d = a+ca, d+cd
-			wt.Ahead = count(wt.Path, base+"..HEAD")
+			if lr := strings.Fields(string(out(wt.Path, "rev-list", "--count", "--left-right", base+"...HEAD"))); len(lr) == 2 {
+				wt.Behind = atoi(lr[0]) // commits on base not in this branch
+				wt.Ahead = atoi(lr[1])  // commits on this branch not in base
+			}
 		}
 		wt.Added, wt.Deleted = a, d
 		// Ahead/behind the upstream tracking branch, if any.
@@ -132,10 +141,6 @@ func diffStat(dir, rev string) (added, deleted int) {
 		}
 	}
 	return added, deleted
-}
-
-func count(dir, rng string) int {
-	return atoi(strings.TrimSpace(string(out(dir, "rev-list", "--count", rng))))
 }
 
 // out runs git and returns stdout, swallowing errors (stats are best-effort).
