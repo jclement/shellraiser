@@ -26,9 +26,18 @@ RUN curl -fsSL https://mise.run | sh -s -- --yes \
 # starship prompt.
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y
 
-# Fresh terminal IDE + coding agents, system-wide so they survive the home mount.
-RUN npm install -g @fresh-editor/fresh-editor @anthropic-ai/claude-code @openai/codex \
-    && npm cache clean --force
+# Fresh terminal IDE + coding agents. Installed into an `ubuntu`-owned global npm
+# prefix (not npm's default root-only /usr/local) so the agents can self-update at
+# runtime — the worker runs as `ubuntu`, and claude's auto-updater needs a writable
+# global folder. The prefix lives outside /home/ubuntu (which a runtime volume
+# shadows), so it survives the home mount. Global npm installs as `ubuntu` also
+# work without sudo as a bonus.
+ENV NPM_CONFIG_PREFIX=/usr/local/npm-global \
+    PATH=/usr/local/npm-global/bin:$PATH
+RUN mkdir -p /usr/local/npm-global \
+    && npm install -g @fresh-editor/fresh-editor @anthropic-ai/claude-code @openai/codex \
+    && npm cache clean --force \
+    && chown -R ubuntu:ubuntu /usr/local/npm-global
 
 # pgweb — browser DB UI, proxied at /db.
 RUN arch="$(dpkg --print-architecture)" \
