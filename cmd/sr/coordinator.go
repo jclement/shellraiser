@@ -72,6 +72,25 @@ func (c *Coordinator) clearDevice(d Device) {
 	c.rebindPorts()
 }
 
+// healWiring re-establishes the per-worker SSH tunnels (port forwards, SSH-agent
+// relay, command relay) for any running worker whose client has dropped — e.g.
+// after an idle-pause froze its sshd and timed the client out. Without this a
+// dropped client leaves the agent relay dead until the next register/resume, so
+// `ssh git@github.com` inside a long-lived container silently loses the agent.
+func (c *Coordinator) healWiring() {
+	for _, w := range c.reg.list() {
+		if w.State != "running" || w.APIPort == "" {
+			continue
+		}
+		if c.pm.clientLive(w.ID) {
+			continue
+		}
+		ui.Info("sr", "re-wiring %s (ssh tunnel dropped)", w.ID)
+		c.pm.CloseWorker(w.ID)
+		c.onWorkerUp(w)
+	}
+}
+
 // rebindPorts re-forwards every running worker's declared ports onto the active
 // device after a device change (connect/disconnect). The bind_port listeners are
 // the only thing that doesn't auto-follow the active device (agent/cmd relays do),
@@ -499,6 +518,7 @@ func (c *Coordinator) Run(sockPath string) error {
 		defer t.Stop()
 		for range t.C {
 			c.reg.reconcile()
+			c.healWiring()
 		}
 	}()
 	go func() {

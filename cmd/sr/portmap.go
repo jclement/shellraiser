@@ -80,6 +80,21 @@ func newPortMapper(signer ssh.Signer, dev Device, ts tailnetListener) *PortMappe
 	return pm
 }
 
+// clientLive reports whether the cached SSH client to a worker is still
+// answering — false if there's none or it has dropped (e.g. the worker was
+// idle-paused and its sshd froze, timing the client out). Used to detect relays
+// that need rebuilding.
+func (m *PortMapper) clientLive(workerID string) bool {
+	m.mu.Lock()
+	c := m.clients[workerID]
+	m.mu.Unlock()
+	if c == nil {
+		return false
+	}
+	_, _, err := c.SendRequest("keepalive@openssh.com", true, nil)
+	return err == nil
+}
+
 // setDevice swaps the active host-presence device (local ⇄ a connected remote).
 // New forwards bind on the new device; existing forwards are left on whatever
 // device bound them (per-device migration is slice 6).
