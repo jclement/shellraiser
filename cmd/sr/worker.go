@@ -238,12 +238,22 @@ func ensureWorker(id, project, image string) (*Worker, error) {
 		Volume:    volumeName(id),
 	}
 
-	if containerState(w.Container) == "running" {
+	switch containerState(w.Container) {
+	case "running":
 		// Re-adopt: reuse the live container and read back its token + ports.
 		w.Token = containerEnv(w.Container, "SHELLRAISER_WORKER_TOKEN")
 		return populatePorts(w)
+	case "paused":
+		// Frozen by the idle reaper — thaw and reuse. NEVER recreate a paused
+		// container: that would kill the user's in-container processes + a
+		// half-finished agent run (the whole point of pausing was to keep them).
+		if _, err := dockerRun("unpause", w.Container); err == nil {
+			w.Token = containerEnv(w.Container, "SHELLRAISER_WORKER_TOKEN")
+			return populatePorts(w)
+		}
+		// unpause failed (rare) → fall through and recreate.
 	}
-	_, _ = dockerRun("rm", "-f", w.Container) // clear any stopped remnant
+	_, _ = dockerRun("rm", "-f", w.Container) // clear any stopped/broken remnant
 
 	// Image is pre-built by the client (so build progress streams to the user's
 	// terminal); fall back to resolving here if a caller didn't supply it.
