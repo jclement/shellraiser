@@ -38,7 +38,8 @@ snapshot:
 brews:
   # Formula is `shellraiser` (brew install jclement/tap/shellraiser); the binary
   # it installs is still `sr`.
-  - name: shellraiser
+  - directory: Formula
+    name: shellraiser
     repository:
       owner: jclement
       name: homebrew-tap
